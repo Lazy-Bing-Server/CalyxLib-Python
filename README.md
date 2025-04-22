@@ -1,2 +1,2 @@
 # CalyxLib-Python
-Frequenly used code collection in Project Blooming Blossom
+Alternative MCDReforged API for MCDR plugins that requires running in other environments
