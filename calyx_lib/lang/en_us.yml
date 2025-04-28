@@ -1,11 +1,25 @@
 # calyx_lib.config
+general:
+  format:
+    datetime: "%b.%d %Y %I:%M:%S %p"
 config:
   saving:
     config_saved: Config saved to file '{file}'
+    comments:
+      saving_at: "Config last saving time: {}"
+      fixed_type_error: |
+        <Error report>
+        Due to validation error，replaced config item '{key}' with default value
+        Validation error message:
+        {errors}
+        Original value: {value}
+      fixed_missing: |
+        Fixed missing item '{key}' with its default value
   loading:
     # Warnings
     file_not_found: Config file '{file}' not found, saving a new one
     yaml_syntax_error: Broken YAML config file, saving a new one
-    item_fixed: Invalid key '{key}', fixed it with its default value
+    type_fixed: Validate type of key '{key}' failed, fixed it with its default value
+    item_lost: Key '{key}' not found, fixed it with its default value
     # Info
     config_loaded: Config loaded

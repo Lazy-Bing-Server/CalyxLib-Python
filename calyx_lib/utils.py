@@ -1,15 +1,11 @@
 import os
 import re
 from pathlib import Path
-from typing import Iterable, Protocol, Any
+from typing import Optional, Collection, Any
 from typing import Union
 from zipfile import ZipFile
 
-from mcdreforged.api.rtext import RTextBase
-
-PathStr = Union[str, Path]
-MessageText = Union[RTextBase, str]
-
+from calyx_lib.typing import PathStr
 
 __all__ = [
     'touch_directory',
@@ -18,17 +14,15 @@ __all__ = [
     'capitalize',
     'to_camel_case',
     'list_bundled_file',
-    'get_value_from_nested_subscriptable_item',
-    'set_value_to_nested_subscriptable_item'
+    'represent'
 ]
 
-
-class Subscriptable(Protocol):
-    def __getitem__(self, item) -> Any:
-        pass
-
-    def __setitem__(self, item, value) -> Any:
-        pass
+"""
+touch_directory(), clean_minecraft_color_code(), clean_console_color_code(),
+represent(), list_bundled_file
+Copied from MCDReforged(https://mcdreforged.com) v2.14.7
+Licensed under LGPL v3.0 (only)
+"""
 
 
 def touch_directory(directory_path: Union[Path, str]) -> None:
@@ -75,35 +69,26 @@ def list_bundled_file(package_path: PathStr, directory_name: PathStr):
     return result
 
 
-def get_value_from_nested_subscriptable_item(
-    item: Subscriptable, path: Iterable[str], default: Any = None
-) -> Any:
-    operating_path = list(path)
-    current_index = operating_path.pop(0)
-    try:
-        current_value = item[current_index]
-    except:
-        return default
-    if not operating_path:
-        return current_value
-    return get_value_from_nested_subscriptable_item(
-        current_value, operating_path, default=default
-    )
-
-
-def set_value_to_nested_subscriptable_item(
-    item: Subscriptable, path: Iterable[str], value: Any, default: Any = None
-) -> Any:
-    operating_path = list(path)
-    current_index = operating_path.pop(0)
-    try:
-        current_value = item[current_index]
-    except:
-        return False
-    if not operating_path:
-        item[current_index] = value
-        return True
-    else:
-        return set_value_to_nested_subscriptable_item(
-            current_value, operating_path, value, default=default
-        )
+def represent(
+        obj: Any,
+        fields: Optional[dict] = None,
+        *,
+        blacklist: Collection[str] = (),
+        parentheses: str = '()'
+) -> str:
+    """
+    aka repr
+    """
+    if fields is None:
+        fields = {k: v for k, v in vars(obj).items() if not k.startswith('_')}
+    blacklist = set(blacklist)
+    return ''.join([
+        type(obj).__name__,
+        parentheses[0],
+        ', '.join([
+            f'{k}={v!r}'
+            for k, v in fields.items()
+            if k not in blacklist
+        ]),
+        parentheses[1],
+    ])

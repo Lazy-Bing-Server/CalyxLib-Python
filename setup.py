@@ -38,6 +38,6 @@ setup(
     author_email="ra1ny_yuki@outlook.com",
     author="Ra1ny_Yuki",
     classifiers=CLASSIFIERS,
-    requires=REQUIRED,
+    install_requires=REQUIRED,
     packages=find_packages(exclude=['tests', '*.tests', '*.tests.*', 'tests.*'])
 )

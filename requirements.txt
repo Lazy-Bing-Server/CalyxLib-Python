@@ -2,3 +2,4 @@ mcdreforged>=2.13.0
 pydantic>=2.0.0
 colorama
 colorlog
+mypy_extensions

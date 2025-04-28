@@ -27,6 +27,11 @@ from calyx_lib.utils import (
 )
 
 
+class DummyLogger(logging.Logger):
+    def _log(self, *args, **kwargs):
+        pass
+
+
 class ZippingDayRotatingFileHandler(logging.FileHandler):
     def __init__(self, file_path: str, rotate_day_count: int):
         self.rotate_day_count = rotate_day_count
@@ -140,7 +145,7 @@ class SyncStdoutStreamHandler(logging.StreamHandler):
 
 
 class MCColorFormatControl:
-    MC_CODE_ITEMS: Dict[str, Fore] = {
+    MC_CODE_ITEMS: Dict[str, "Fore"] = {    # type: ignore
         '§0': Fore.BLACK,
         '§1': Fore.BLUE,
         '§2': Fore.GREEN,
@@ -290,14 +295,16 @@ class BlossomLogger(logging.Logger):
             pass
         return self.__verbosity or mcdr_should_log
 
-    def _log(self, level: int, msg: Any, args: tuple, **kwargs) -> None:
+    def _log(self, level: int, msg: Any, args: tuple, **kwargs) -> None:    # type: ignore
         if self.__plugin_id is not None:
             extra_args = kwargs.get('extra', {})
             extra_args[PluginIdAwareFormatter.PLUGIN_ID_KEY] = self.__plugin_id
             kwargs['extra'] = extra_args
 
+        msg = str(msg)
         # noinspection PyProtectedMember
-        super()._log(level, msg, args, **kwargs)
+        for line in msg.splitlines():
+            super()._log(level, line, args, **kwargs)
 
     def mdebug(self, msg: Any, *args, no_check: bool = False):
         """

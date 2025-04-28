@@ -10,6 +10,7 @@ from mcdreforged.api.types import PluginServerInterface
 from calyx_lib.query import CommandQueries
 from calyx_lib.utils import to_camel_case
 
+
 ONLINE_PLAYER_MATCH_PATTERN = [
     # <1.16
     # There are 6 of a max 100 players online: 122, abc, xxx, www, QwQ, bot_tob

@@ -4,15 +4,25 @@ import os
 from logging import Logger
 from pathlib import Path
 from threading import RLock
-from typing import Optional, List, Dict, Union, Callable, Any
+from typing import Optional, List, Dict, Union, Callable, Any, TYPE_CHECKING
 from zipfile import ZipFile
 
 from mcdreforged.api.rtext import RTextBase, RTextMCDRTranslation
 from mcdreforged.api.types import ServerInterface
 from ruamel.yaml import YAML
 
-from calyx_lib.constants import SELF_PACKAGE_PATH
-from calyx_lib.utils import PathStr, list_bundled_file, MessageText
+from calyx_lib.utils import list_bundled_file
+from calyx_lib.typing import (
+    PathStr,
+    MessageText,
+    TranslationKeyDictNested,
+    TranslationKeyDict,
+    TranslationLanguageDict,
+    TranslationStorage
+)
+
+if TYPE_CHECKING:
+    from calyx_lib.interface.blossom_base_interface import BlossomBaseInterface
 
 _NONE = object()
 
@@ -25,15 +35,11 @@ __all__ = [
 class BlossomTranslator:
     yaml = YAML(typ='safe')
 
-    def __init__(self, logger: Optional["Logger"] = None):
-        class __DummyLogger(Logger):
-            def _log(self, *args, **kwargs):
-                pass
-
-        self.__logger = logger or __DummyLogger("TranslatorDummyLogger")
-        self.__storage: Dict[str, Dict[str, str]] = {}
+    def __init__(self, base_interface: "BlossomBaseInterface"):
+        self.__base_interface = base_interface
+        self.__storage: TranslationStorage = {}
         self.__lock = RLock()
-        self.__language_translate_order = ['en_us']
+        self.__fallback_language_order = ['en_us']
 
         psi = ServerInterface.psi_opt()
         if psi is not None:
@@ -41,32 +47,36 @@ class BlossomTranslator:
 
     @property
     def logger(self) -> Logger:
-        return self.__logger
+        return self.__base_interface.logger
 
     @property
     def available(self) -> bool:
-        return len(self.__storage) == 0
+        return len(self.__storage) != 0
+
+    @property
+    def fallback_language_order(self):
+        return self.__fallback_language_order
 
     def set_language(self, language: str):
         with self.__lock:
-            if language in self.__language_translate_order:
-                self.__language_translate_order.remove(language)
-            self.__language_translate_order = [language] + self.__language_translate_order
+            if language in self.__fallback_language_order:
+                self.__fallback_language_order.remove(language)
+            self.__fallback_language_order = [language] + self.__fallback_language_order
 
     def remove_language(self, language: str):
         with self.__lock:
-            if language not in self.__language_translate_order:
+            if language not in self.__fallback_language_order:
                 return
-            self.__language_translate_order.remove(language)
+            self.__fallback_language_order.remove(language)
             if language == 'en_us':
-                self.__language_translate_order.append(language)
+                self.__fallback_language_order.append(language)
 
     def register_translation(
-            self, translation_dict: Dict[str, Union[dict, str]], language: str
+            self, translation_dict: TranslationKeyDictNested, language: str
     ):
         def get_full_key_value_map(
-                target_dict: Dict[str, Union[dict, str]],
-                result_dict: Optional[Dict[str, str]] = None,
+                target_dict: TranslationKeyDictNested,
+                result_dict: Optional[TranslationKeyDict] = None,
                 current_layer: Optional[List[str]] = None
         ):
             if current_layer is None:
@@ -148,7 +158,7 @@ class BlossomTranslator:
         trans = self.__storage.get(translation_key)
         if isinstance(trans, dict):
             with self.language_context(override_language):
-                for lang in self.__language_translate_order:
+                for lang in self.__fallback_language_order:
                     if lang in trans.keys():
                         return True
         return False
@@ -156,18 +166,18 @@ class BlossomTranslator:
     @contextlib.contextmanager
     def language_context(self, language: Optional[str]):
         with self.__lock:
-            language_order = self.__language_translate_order
-            self.__language_translate_order = self.__language_translate_order.copy()
+            language_order = self.__fallback_language_order
+            self.__fallback_language_order = self.__fallback_language_order.copy()
             try:
                 if language is not None:
                     self.set_language(language)
                 yield
             finally:
-                self.__language_translate_order = language_order
+                self.__fallback_language_order = language_order
 
-    def __dtr(self, translation_dict: Dict[str, str], *args, **kwargs):
+    def translate_from_dict(self, translation_dict: TranslationLanguageDict, *args, **kwargs):
         translated_raw_text = _NONE
-        for lang in self.__language_translate_order:
+        for lang in self.__fallback_language_order:
             translated_raw_text = translation_dict.get(lang, _NONE)
             if translated_raw_text is not _NONE:
                 break
@@ -193,7 +203,7 @@ class BlossomTranslator:
             raise ValueError(f'Failed to apply args {args} and kwargs {kwargs} '
                              f'to translated_text {translated_raw_text}: {str(e)}')
 
-    def tr(
+    def translate(
             self,
             translation_key: str,
             *args,
@@ -201,7 +211,6 @@ class BlossomTranslator:
             _mcdr_tr_language: Optional[str] = None,
             _mcdr_tr_allow_failure: bool = True,
             _calyx_default_fallback: Optional[MessageText] = None,
-            _calyx_ignore_input_language: bool = False,
             _calyx_log_error_message: bool = True,
             **kwargs
     ) -> MessageText:
@@ -211,14 +220,12 @@ class BlossomTranslator:
         _calyx_default_fallback = _calyx_default_fallback or translation_key
         translation_dict = self.__storage.get(translation_key, {})
 
-        if _calyx_ignore_input_language:
-            _mcdr_tr_language = None
         with self.language_context(language=_mcdr_tr_language):
             try:
-                return self.__dtr(translation_dict, *args, **kwargs)
+                return self.translate_from_dict(translation_dict, *args, **kwargs)
             except Exception as e:
                 lang_text = ', '.join(
-                    [f'"{lang}"' for lang in self.__language_translate_order]
+                    [f'"{lang}"' for lang in self.__fallback_language_order]
                 )
                 error_message = 'Error translate text "{}" to language {}: {}'.format(
                     translation_key, lang_text, str(e)
@@ -230,67 +237,5 @@ class BlossomTranslator:
                 else:
                     raise e
 
-    def rtr(
-        self,
-        translation_key: str,
-        *args,
-        _mcdr_tr_allow_failure: bool = True,
-        _calyx_default_fallback: Optional[MessageText] = None,
-        _calyx_log_error_message: bool = True,
-        _calyx_ignore_input_language: bool = False,
-        **kwargs,
-    ) -> RTextMCDRTranslation:
-        return RTextMCDRTranslation(
-            translation_key,
-            *args,
-            _mcdr_tr_allow_failure=_mcdr_tr_allow_failure,
-            _calyx_default_fallback=_calyx_default_fallback,
-            _calyx_log_error_message=_calyx_log_error_message,
-            _calyx_ignore_input_language=_calyx_ignore_input_language,
-            **kwargs
-        ).set_translator(
-            self.tr  # type: ignore
-        )
-
     def dict_tr(self, translation_dict: Dict[str, str], *args, **kwargs):
-        def fake_tr(
-                translation_key: str,
-                *inner_args,
-                language: Optional[str] = None,
-                _mcdr_tr_language: Optional[str] = None,
-                _mcdr_tr_allow_failure: bool = True,
-                _calyx_log_error_message: bool = True,
-                _calyx_default_fallback: str = '<Translation failed>',
-                **inner_kwargs
-        ) -> MessageText:
-            if language is not None and _mcdr_tr_language is None:
-                _mcdr_tr_language = language
-            try:
-                return self.__dtr(
-                    translation_dict,
-                    *inner_args,
-                    _mcdr_tr_language=_mcdr_tr_language,
-                    **inner_kwargs
-                )
-            except Exception as e:
-                lang_text = ', '.join(
-                    [f'"{lang}"' for lang in self.__language_translate_order]
-                )
-                error_message = (f'Error translate text from dict to '
-                                 f'language {lang_text}: {str(e)}')
-                if _mcdr_tr_allow_failure:
-                    if _calyx_log_error_message:
-                        self.logger.error(error_message)
-                    return _calyx_default_fallback
-                else:
-                    raise e
-        return RTextMCDRTranslation('', *args, **kwargs).set_translator(
-            fake_tr)  # type: ignore
-
-
-calyx_translator = BlossomTranslator()
-for lang_ in ['zh_cn', 'en_us']:
-    target_file_path = Path(SELF_PACKAGE_PATH) / 'lang' / f'{lang_}.yml'
-    if target_file_path.is_file():
-        calyx_translator.register_translation_file(target_file_path, encoding='utf8')
-
+        pass

@@ -1,0 +1,27 @@
+
+general:
+  format:
+    datetime: "%Y:%m:%d %H:%M:%S"
+# calyx_lib.config
+config:
+  saving:
+    config_saved: 配置文件已保存至 '{file}'
+    comments:
+      saving_at: "配置文件上次保存时间: {}"
+      fixed_type_error: |
+        <错误报告>
+        由于内容校验失败，配置项 "{key}" 改用了默认值
+        校验错误信息:
+        {errors}
+        原先的值: {value}
+      fixed_missing: |
+        已补齐缺失的配置项 "{key}" 的默认值
+
+  loading:
+    # Warnings
+    file_not_found: 配置文件 '{file}' 未找到, 已重新生成
+    yaml_syntax_error: 损坏的 YAML 文件, 已重新生成
+    type_fixed: 配置项 '{key}' 类型验证失败, 已使用默认值覆盖
+    item_lost: 配置项 '{key}' 未找到，已使用默认值补全
+    # Info
+    config_loaded: 配置文件已加载
