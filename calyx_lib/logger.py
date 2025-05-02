@@ -270,8 +270,8 @@ class BlossomLogger(logging.Logger):
         datefmt='%H:%M:%S',
     )
 
-    def __init__(self, plugin_id: Optional[str] = None):
-        super().__init__(self.DEFAULT_NAME)
+    def __init__(self, logger_name: Optional[str] = None, plugin_id: Optional[str] = None):
+        super().__init__(logger_name or self.DEFAULT_NAME)
         self.file_handler: Optional[logging.FileHandler] = None
         self.__plugin_id = plugin_id
 

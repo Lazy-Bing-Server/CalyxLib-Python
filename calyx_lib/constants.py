@@ -3,8 +3,8 @@ import os
 NAME = 'CalyxLib'
 PACKAGE_NAME = 'calyx_lib'
 
-VERSION = '0.1.0-alpha.1'
-VERSION_PYPI = '0.1.0a1'
+VERSION = '0.1.0-alpha.2'
+VERSION_PYPI = '0.1.0a2'
 
 GITHUB_URL = 'https://github.com/Lazy-Bing-Server/CalyxLib-Python'
 
