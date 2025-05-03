@@ -8,17 +8,18 @@ import datetime
 import itertools
 import logging
 import os
-import sys
+import threading
 import time
 import zipfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from threading import local, Lock
-from typing import Dict, Optional, IO, Type, Any
+from threading import local
+from typing import Dict, Optional, Type, Any
 
 from colorama import Fore, Style
 from colorlog import ColoredFormatter
-from mcdreforged.api.types import ServerInterface
+from mcdreforged.api.types import ServerInterface, SyncStdoutStreamHandler
 
 from calyx_lib.utils import (
     clean_minecraft_color_code,
@@ -107,41 +108,6 @@ class ZippingDayRotatingFileHandler(logging.FileHandler):
         finally:
             if inited:
                 self.stream = self._open()
-
-
-class _SyncWriteStream:
-    """
-    A stream wrapper with its method "write" synchronized.
-    All accesses to other attributes are forwarded to the wrapped stream
-    """
-    def __init__(self, stream: IO[str]):
-        self.sws_stream = stream
-        self.sws_lock = Lock()
-
-    def write(self, s: str):
-        with self.sws_lock:
-            self.sws_stream.write(s)
-
-    def __getattribute__(self, item: str):
-        if item in ('write', 'sws_stream', 'sws_lock'):
-            return object.__getattribute__(self, item)
-        else:
-            return self.sws_stream.__getattribute__(item)
-
-
-class SyncStdoutStreamHandler(logging.StreamHandler):
-    __sws = _SyncWriteStream(sys.stdout)
-
-    def __init__(self):
-        super().__init__(type(self).__sws)
-
-    @classmethod
-    def update_stdout(cls, stream: IO[str]):
-        cls.__sws.sws_stream = stream
-
-    @classmethod
-    def write_direct(cls, s: str):
-        cls.__sws.write(s)
 
 
 class MCColorFormatControl:
@@ -270,7 +236,11 @@ class BlossomLogger(logging.Logger):
         datefmt='%H:%M:%S',
     )
 
-    def __init__(self, logger_name: Optional[str] = None, plugin_id: Optional[str] = None):
+    __TLS = threading.local()
+
+    def __init__(
+        self, logger_name: Optional[str] = None, plugin_id: Optional[str] = None
+    ):
         super().__init__(logger_name or self.DEFAULT_NAME)
         self.file_handler: Optional[logging.FileHandler] = None
         self.__plugin_id = plugin_id
@@ -280,20 +250,37 @@ class BlossomLogger(logging.Logger):
 
         self.addHandler(self.console_handler)
         self.setLevel(logging.INFO)
-        self.__verbosity: bool = False
 
-    def set_verbosity(self, verbosity: bool):
-        self.__verbosity = verbosity
+        self.__debug_checker = lambda anything: False
 
-    def should_log_debug(self, *args, **kwargs):
-        mcdr_should_log = False
+    def set_debug_checker(self, checker: Callable[[Any], bool]):
+        self.__debug_checker = checker
+
+    @classmethod
+    def __get_tls_context(cls):
+        return getattr(cls.__TLS, 'debug_context', None)
+
+    @classmethod
+    @contextmanager
+    def debug_context(cls, context: Any):
+        prev = cls.__get_tls_context()
+        cls.__TLS.debug_context = context
         try:
-            psi = ServerInterface.psi_opt()
-            if psi is not None:
+            yield
+        finally:
+            cls.__TLS.debug_context = prev
+
+    def should_log_debug(self, context: Any = None):
+        mcdr_should_log = False
+        if context is None:
+            context = self.__get_tls_context()
+        psi = ServerInterface.psi_opt()
+        if context is None and psi is not None:
+            try:
                 mcdr_should_log = psi.logger.should_log_debug()  # type: ignore
-        except:
-            pass
-        return self.__verbosity or mcdr_should_log
+            except:
+                pass
+        return self.__debug_checker(context) or mcdr_should_log
 
     def _log(self, level: int, msg: Any, args: tuple, **kwargs) -> None:    # type: ignore
         if self.__plugin_id is not None:
@@ -306,11 +293,17 @@ class BlossomLogger(logging.Logger):
         for line in msg.splitlines():
             super()._log(level, line, args, **kwargs)
 
-    def mdebug(self, msg: Any, *args, no_check: bool = False):
+    def mdebug(self, msg: Any, *args, debug_context: Any = None, no_check: bool = False):
         """
         mcdr debug logging
         """
-        if no_check or self.isEnabledFor(logging.DEBUG) or self.should_log_debug():
+        if (
+                no_check
+                or
+                self.isEnabledFor(logging.DEBUG)
+                or
+                self.should_log_debug(debug_context)
+        ):
             with MCColorFormatControl.disable_minecraft_color_code_transform():
                 self._log(logging.DEBUG, msg, args, stacklevel=2)
 
