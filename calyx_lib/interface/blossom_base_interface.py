@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING, Literal, Type, Iterable, List, Any
+from typing import Optional, Union, TYPE_CHECKING, Literal, Type, Iterable, List, Any, \
+    TypeVar
 
 from mcdreforged.api.rtext import RTextBase, RColor
 from mcdreforged.api.types import CommandSource
@@ -22,6 +23,9 @@ from calyx_lib.utils import touch_directory
 if TYPE_CHECKING:
     from mcdreforged.api.rtext import RTextMCDRTranslation
     from typing import Dict
+
+
+ModelType = TypeVar('ModelType', bound=BaseModel)
 
 
 class BlossomBaseInterface(ABC):
@@ -231,15 +235,15 @@ class BlossomBaseInterface(ABC):
         )
 
     def load_config(
-        self,
-        file_path: PathStr,
-        model_class: Type[BaseModel],
-        echo_in_console: bool = True,
-        source_to_reply: Optional[CommandSource] = None,
-        encoding: str = "utf8",
-        failure_policy: Literal['regen', 'raise'] = "regen",
-        should_generate_comment: bool = True,
-    ):
+            self,
+            file_path: PathStr,
+            model_class: Type[ModelType],
+            echo_in_console: bool = True,
+            source_to_reply: Optional[CommandSource] = None,
+            encoding: str = "utf8",
+            failure_policy: Literal['regen', 'raise'] = "regen",
+            should_generate_comment: bool = True,
+    ) -> ModelType:
         log_handler = self.__ConfigProcessLoggingHandler(
             self, echo_in_console=echo_in_console, source_to_reply=source_to_reply
         )

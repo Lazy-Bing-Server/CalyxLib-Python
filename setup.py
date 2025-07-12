@@ -39,5 +39,8 @@ setup(
     author="Ra1ny_Yuki",
     classifiers=CLASSIFIERS,
     install_requires=REQUIRED,
+    package_data={
+        constants.PACKAGE_NAME: ['lang/*.yml']
+    },
     packages=find_packages(exclude=['tests', '*.tests', '*.tests.*', 'tests.*'])
 )
