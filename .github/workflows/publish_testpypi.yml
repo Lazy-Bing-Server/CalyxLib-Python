@@ -1,0 +1,44 @@
+name: Publish Dev to TestPyPI
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  publish-testpypi:
+    name: Build and Publish to TestPyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/calyx_lib
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Inject Dev Version
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          VERSION_FILE=$(find src -name "constants.py" | xargs grep -l "__version__")
+          sed -i "s/__version__ = \"\([0-9][^\"]*\)\"/__version__ = \"\1.dev$COUNT\"/" $VERSION_FILE
+          echo "New Version: $(grep "__version__" $VERSION_FILE)"
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

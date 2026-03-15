@@ -4,7 +4,8 @@ NAME = 'CalyxLib'
 PACKAGE_NAME = 'calyx_lib'
 
 VERSION = '0.1.0-alpha.5'
-__version__ = '0.1.0a5'
+# Requires "" here to make regex work in publish action
+__version__ = "0.1.0a5"
 VERSION_PYPI = __version__
 
 GITHUB_URL = 'https://github.com/Lazy-Bing-Server/CalyxLib-Python'
