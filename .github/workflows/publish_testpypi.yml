@@ -31,9 +31,9 @@ jobs:
       - name: Inject Dev Version
         run: |
           COUNT=$(git rev-list --count HEAD)
-          VERSION_FILE=$(find src -name "constants.py" | xargs grep -l "__version__")
-          sed -i "s/__version__ = \"\([0-9][^\"]*\)\"/__version__ = \"\1.dev$COUNT\"/" $VERSION_FILE
-          echo "New Version: $(grep "__version__" $VERSION_FILE)"
+          VERSION_FILE=$(find src -name "constants.py" | xargs grep -l "VERSION_PYPI")
+          sed -i "s/VERSION_PYPI = \"\([0-9][^\"]*\)\"/VERSION_PYPI = \"\1.dev$COUNT\"/" $VERSION_FILE
+          echo "New Version: $(grep "VERSION_PYPI" $VERSION_FILE)"
 
       - name: Build package
         run: uv build
