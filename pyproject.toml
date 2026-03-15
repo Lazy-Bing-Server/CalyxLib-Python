@@ -34,6 +34,7 @@ dynamic = ["version"]
 
 [tool.hatch.version]
 path = "src/calyx_lib/constants.py"
+pattern = "VERSION_PYPI = \"(?P<version>[^\"]+)\""
 
 [[tool.uv.index]]
 name = "testpypi"
