@@ -2,11 +2,13 @@ import re
 from logging import Logger
 from typing import List, Optional
 
+from mcdreforged import RTextMCDRTranslation
+from mcdreforged.api.types import CommandSource
 from mcdreforged.api.types import PluginServerInterface
 from mcdreforged.api.rtext import RText, RAction, RTextBase
 
 from calyx_lib.interface.blossom_base_interface import BlossomBaseInterface
-from calyx_lib.typing import MessageText
+from calyx_lib.generic import MessageText
 
 
 class BlossomMCDRInterface(BlossomBaseInterface):
@@ -53,7 +55,7 @@ class BlossomMCDRInterface(BlossomBaseInterface):
                     processed.append(
                         RText(line)
                         .c(RAction.suggest_command, command)
-                        .h(self.rtr("help_message.suggest", command))
+                        .h(self.rtr("calyx_lib.help_message.suggest", command))
                     )
 
                     self.logger.debug(f'Rich help line: "{line}"')
@@ -70,3 +72,8 @@ class BlossomMCDRInterface(BlossomBaseInterface):
             return RTextBase.join("\n", processed)
 
         return self.rtr(translation_key, *args, **kwargs).set_translator(__htr)
+
+    def reply(self, source: CommandSource, text: MessageText):
+        with RTextMCDRTranslation.language_context(source.get_preference().language):
+            for line in self.split_rtext_into_raw_json_list(RTextBase.from_any(text), divider='\n'):
+                source.reply(RTextBase.from_json_object(line))

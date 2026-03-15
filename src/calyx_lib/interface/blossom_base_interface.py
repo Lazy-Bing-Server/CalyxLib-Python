@@ -2,10 +2,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING, Literal, Type, Iterable, List, Any, \
-    TypeVar
+from copy import deepcopy
+from typing import Optional, TYPE_CHECKING, Literal, Type, Iterable, List, Any, \
+    TypeVar, Union, Tuple
 
-from mcdreforged.api.rtext import RTextBase, RColor
+from mcdreforged.api.rtext import RTextBase, RColor, RTextMCDRTranslation
 from mcdreforged.api.types import CommandSource
 from pydantic import BaseModel, ValidationError, TypeAdapter
 from ruamel.yaml import YAML
@@ -15,13 +16,11 @@ from calyx_lib.config.pydantic import PydanticValidationErrorMessage, \
     ConfigSerializationContext
 from calyx_lib.config.yaml import any_to_yaml, ConfigComment, \
     CommentContext, CommentCarrier, adjust_comment_indentation
-from calyx_lib.translation.text import RTextBlossomTranslation
-from calyx_lib.translation.translator import BlossomTranslator
-from calyx_lib.typing import MessageText, PathStr, Subscriptable, TranslationKeyDictRich
+from calyx_lib.translator import BlossomTranslator
+from calyx_lib.generic import MessageText, PathStr, Subscriptable, TranslationLanguageDict
 from calyx_lib.utils import touch_directory
 
 if TYPE_CHECKING:
-    from mcdreforged.api.rtext import RTextMCDRTranslation
     from typing import Dict
 
 
@@ -75,7 +74,56 @@ class BlossomBaseInterface(ABC):
     def get_language(self):
         ...
 
-    def dtr(self, translation_dict: TranslationKeyDictRich, *args, **kwargs):
+    def split_rtext_into_raw_json_list(
+            self,
+            any_rtext: RTextBase,
+            divider: str,
+            max_split: int = -1,
+            language_override: Optional[str] = None
+    ) -> list:
+        def apply_text_to_dict(dict_: dict, *text):
+            for item in text:
+                result_ = deepcopy(dict_)
+                result_['text'] = item
+                yield result_
+
+        def split_raw_json(target_json: Union[dict, list, str], divider_: str, maxsplit: int = -1) -> Tuple[list, int]:
+            if maxsplit == 0:
+                return [target_json], 0
+            if isinstance(target_json, dict):
+                if 'text' in target_json.keys():
+                    target_json = target_json.copy()
+                    divided_text = list(str(target_json.pop('text')).split(divider_, maxsplit=maxsplit))
+                    split_times = len(divided_text) - 1
+                    if maxsplit != -1:
+                        maxsplit = maxsplit - split_times
+                    return list(apply_text_to_dict(target_json, *divided_text)), maxsplit
+                return [target_json], maxsplit
+            elif isinstance(target_json, str):
+                divided_text = target_json.split(divider_, maxsplit=maxsplit)
+                split_times = len(divided_text) - 1
+                if maxsplit != -1:
+                    maxsplit = maxsplit - split_times
+                return list(divided_text), maxsplit
+            elif isinstance(target_json, list):
+                result_list = []
+                for item in target_json:
+                    current_split, maxsplit = split_raw_json(item, divider_, maxsplit=maxsplit)
+                    result_list += current_split
+                    if maxsplit == 0:
+                        break
+                return result_list, maxsplit
+            else:
+                raise TypeError(f"Not a valid raw json type: {target_json.__class__.__name__}")
+
+        language = language_override or self.get_language()
+        with RTextMCDRTranslation.language_context(language):
+            raw_json = any_rtext.to_json_object()
+        result, _ = split_raw_json(raw_json, divider, maxsplit=max_split)
+        return result
+
+
+    def dtr(self, translation_dict: TranslationLanguageDict, *args, **kwargs):
         def fake_tr(
             translation_key: str,
             *inner_args,
@@ -86,19 +134,17 @@ class BlossomBaseInterface(ABC):
             _calyx_default_fallback: str = "<Translation failed>",
             **inner_kwargs,
         ) -> MessageText:
-            if language is not None and _mcdr_tr_language is None:
-                _mcdr_tr_language = language
+            language_order = self.translator.format_language_order(
+                language=language, _mcdr_tr_language=_mcdr_tr_language)
             try:
                 return self.translator.translate_from_dict(
                     translation_dict,
+                    language_order,
                     *inner_args,
-                    _mcdr_tr_language=_mcdr_tr_language,
                     **inner_kwargs,
                 )
             except Exception as e:
-                lang_text = ", ".join(
-                    [f'"{lang}"' for lang in self.translator.fallback_language_order]
-                )
+                lang_text = self.translator.format_language_text(language_order)
                 error_message = (
                     f"Error translate text from dict to language {lang_text}: {str(e)}"
                 )
@@ -109,9 +155,7 @@ class BlossomBaseInterface(ABC):
                 else:
                     raise e
 
-        return RTextBlossomTranslation(
-            "", *args, **kwargs
-        ).set_translator(fake_tr).set_language_getter(self.get_language)
+        return RTextMCDRTranslation("", *args, **kwargs).set_translator(fake_tr)  # ty:ignore[invalid-argument-type]
 
     def tr(
             self,
@@ -143,15 +187,15 @@ class BlossomBaseInterface(ABC):
             _calyx_default_fallback: Optional[MessageText] = None,
             _calyx_log_error_message: bool = True,
             **kwargs
-    ) -> Union["RTextMCDRTranslation", "RTextBlossomTranslation"]:
-        return RTextBlossomTranslation(
+    ) -> "RTextMCDRTranslation":
+        return RTextMCDRTranslation(
             translation_key,
             *args,
             _mcdr_tr_allow_failure=_mcdr_tr_allow_failure,
             _calyx_default_fallback=_calyx_default_fallback,
             _calyx_log_error_message=_calyx_log_error_message,
             **kwargs,
-        ).set_language_getter(self.get_language).set_translator(self.tr)
+        ).set_translator(self.tr)  # ty:ignore[invalid-argument-type]
 
     def __get_default_comment_context(self):
         def tr(
@@ -166,10 +210,10 @@ class BlossomBaseInterface(ABC):
                 **kwargs
             )
         headline = ConfigComment(
-            text=self.tr(
-                'config.saving.comments.saving_at',
+            text_getter=lambda: self.tr(
+                'calyx_lib.config.saving.comments.saving_at',
                 datetime.now().strftime(
-                    str(self.tr('general.format.datetime'))
+                    str(self.tr('calyx_lib.general.format.datetime'))
                 )
             ),
             priority=float('-inf'),
@@ -177,7 +221,7 @@ class BlossomBaseInterface(ABC):
         )
 
         return CommentContext(
-            key_comments={}, global_wrapper=tr, headlines=[headline], eof=[]
+            key_comments={}, global_wrapper=lambda x: x, headlines=[headline], eof=[]
         )
 
     def save_config(
@@ -224,13 +268,13 @@ class BlossomBaseInterface(ABC):
             context.apply_comment_to_carrier(serialized)
         with open(file_path, mode='w', encoding=encoding) as f:
             if should_generate_comment:
-                context.apply_comment_to_stream(context.headlines, f)
-            f.write(adjust_comment_indentation(any_to_yaml(serialized)))
+                context.apply_comment_to_stream(context.headlines, f, self, None, None)
+            f.write(adjust_comment_indentation(any_to_yaml(self, serialized)))
             if should_generate_comment:
-                context.apply_comment_to_stream(context.eof, f)
+                context.apply_comment_to_stream(context.eof, f, self, None, None)
         log_handler.info(
             self.rtr(
-                'config.saving.config_saved', file=str(file_path)
+                'calyx_lib.config.saving.config_saved', file=str(file_path)
             )
         )
 
@@ -264,7 +308,7 @@ class BlossomBaseInterface(ABC):
                 should_generate_comment=should_generate_comment
             )
             log_handler.warning(
-                self.rtr('config.loading.file_not_found', file=str(file_path))
+                self.rtr('calyx_lib.config.loading.file_not_found', file=str(file_path))
             )
             return cfg_final
 
@@ -283,13 +327,13 @@ class BlossomBaseInterface(ABC):
                 if k not in raw_data.keys():
                     raw_data[k] = v
                     log_handler.warning(
-                        self.rtr('config.loading.item_lost', key=k)
+                        self.rtr('calyx_lib.config.loading.item_lost', key=k)
                     )
                     if comment_context is not None:
                         comment_context.add_comment(
                             (k, ),
                             ConfigComment(
-                                self.tr('config.saving.comments.fixed_missing', key=k),
+                                text_getter=lambda: self.tr('calyx_lib.config.saving.comments.fixed_missing', key=k),
                                 priority=float('-inf'),
                                 ignore_global_wrapper=True
                             )
@@ -313,7 +357,7 @@ class BlossomBaseInterface(ABC):
                 def fix_nested_values(
                         error: PydanticValidationErrorMessage,
                         item: Subscriptable,
-                        default: Subscriptable,
+                        default_values: Subscriptable,
                         remaining: Iterable[Any],
                         consumed: Optional[List[Any]] = None,
                 ) -> bool:
@@ -324,10 +368,10 @@ class BlossomBaseInterface(ABC):
                     current_index = current_path.pop(0)
                     consumed = consumed or []
                     try:
-                        if isinstance(default, list):
-                            current_default = default[0]
+                        if isinstance(default_values, list):
+                            current_default = default_values[0]
                         else:
-                            current_default = default[current_index]
+                            current_default = default_values[current_index]
                     except:
                         return True
                     consumed.append(current_index)
@@ -369,12 +413,12 @@ class BlossomBaseInterface(ABC):
                         error_text = []
                         for e in error_list:
                             error_text.append('- ' + e.msg)
-                        input_value = any_to_yaml(error_list[0].input)
+                        input_value = any_to_yaml(self, error_list[0].input)
                         if len(input_value.splitlines()) > 1:
                             input_value = '\n' + input_value
                         comment = ConfigComment(
-                            self.rtr(
-                                'config.saving.comments.fixed_type_error',
+                            lambda: self.rtr(
+                                'calyx_lib.config.saving.comments.fixed_type_error',
                                 key='.'.join([str(char) for char in k]),
                                 errors='\n'.join(error_text),
                                 value=input_value
@@ -386,19 +430,19 @@ class BlossomBaseInterface(ABC):
                 for pt in fixed:
                     log_handler.warning(
                         self.rtr(
-                            "config.loading.type_fixed", key='.'.join(
+                            "calyx_lib.config.loading.type_fixed", key='.'.join(
                                 [str(i) for i in pt]
                             )
                         )
                     )
                 cfg_final = model_class.model_validate(raw_data)
-        except Exception as exc:
+        except Exception as e:
             if failure_policy == 'raise':
                 raise
             requires_save = True
             cfg_final = model_class()
-            log_handler.warning(self.rtr('config.loading.yaml_syntax_error'))
-            self.logger.debug(f"Error reason: {exc}")
+            log_handler.warning(self.rtr('calyx_lib.config.loading.yaml_syntax_error'))
+            self.logger.debug(f"Error reason: {e}")
         if requires_save:
             self.save_config(
                 file_path,
@@ -410,6 +454,6 @@ class BlossomBaseInterface(ABC):
                 should_generate_comment=should_generate_comment,
                 optional_context=comment_context
             )
-        log_handler.info(self.rtr('config.loading.config_loaded'))
+        log_handler.info(self.rtr('calyx_lib.config.loading.config_loaded'))
 
         return cfg_final

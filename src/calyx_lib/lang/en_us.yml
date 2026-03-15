@@ -1,0 +1,51 @@
+# calyx_lib.config
+calyx_lib:
+  general:
+    format:
+      datetime: "%b.%d %Y %I:%M:%S %p"
+  config:
+    saving:
+      config_saved: Config saved to file '{file}'
+      comments:
+        saving_at: "Config last saving time: {}"
+        fixed_type_error: |
+          <Error report>
+          Due to validation error，replaced config item '{key}' with default value
+          Validation error message:
+          {errors}
+          Original value: {value}
+        fixed_missing: |
+          Fixed missing item '{key}' with its default value
+    loading:
+      # Warnings
+      file_not_found: Config file '{file}' not found, saving a new one
+      yaml_syntax_error: Broken YAML config file, saving a new one
+      type_fixed: Validate type of key '{key}' failed, fixed it with its default value
+      item_lost: Key '{key}' not found, fixed it with its default value
+      # Info
+      config_loaded: Config loaded
+    in_game:
+      # Info
+      value_set: Value of config key §e{key}§r have been set to §b{value}§r
+      config_saved: Config §asaved§r
+      config_not_saved: Config §enot saved§r
+      undo_modify: "[§7Undo§r]"
+      # Error
+      invalid_key: Found no such key named {}
+      conflict_args: Conflict arguments provided
+      illegal_value: Illegal value or wrong key input
+      set_failed: Config set failed due to unknown reason
+      # Warning:
+      duplicated_args: Ignored duplicated arguments
+      # Hover
+      suggested_value_hover: Click to set config key §e{}§r to value §b{}§r
+      default_desc: No description provided yet
+  help_message:
+    suggest: Click to fill command §7{}§r
+  list_widget:
+    prev_button:
+      hover: Click to browse the previous page
+    next_button:
+      hover: Click to browse the next page
+  global_exception:
+    unexpected: "Unexpected internal exception: {e}"

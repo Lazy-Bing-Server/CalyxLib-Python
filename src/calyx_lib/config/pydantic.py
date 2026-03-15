@@ -77,7 +77,7 @@ class CommentedModel(BaseModel):
         ):
             return target_dict
 
-        carrier = CommentCarrier(target_dict)
+        carrier = CommentCarrier(target_dict, self.__class__)
         carrier.global_wrapper = info.context.global_wrapper
         for k, f in self.model_fields.items():
             for meta in f.metadata:

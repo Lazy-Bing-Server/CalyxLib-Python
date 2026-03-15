@@ -1,11 +1,11 @@
+import inspect
 import os
 import re
 from pathlib import Path
-from typing import Optional, Collection, Any
-from typing import Union
+from typing import Optional, Collection, Any, Callable, Union, TypeVar
 from zipfile import ZipFile
 
-from calyx_lib.typing import PathStr
+from calyx_lib.generic import PathStr
 
 __all__ = [
     'touch_directory',
@@ -92,3 +92,48 @@ def represent(
         ]),
         parentheses[1],
     ])
+
+
+T = TypeVar('T')
+
+def adaptive_call(func: Callable[..., T], args: list, kwargs: dict) -> T:
+    """
+    Adaptive call functions
+
+    All the positional and keyword args will adapt signature of the function
+    All the parameters that are out of bound or not found in keyword arguments will be ignored
+    :param func: Callable
+    :param args: Positional arguments
+    :param kwargs: Keyword arguments
+    :return: Any
+    """
+    sig = inspect.signature(func)
+    params = list(sig.parameters.values())
+
+    final_args = []
+    pos_names = [
+        p.name for p in params
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    has_var_args = any(p.kind == p.VAR_POSITIONAL for p in params)
+    has_var_kwargs = any(p.kind == p.VAR_KEYWORD for p in params)
+
+    for i, arg_value in enumerate(args):
+        if i >= len(pos_names):
+            if has_var_args:
+                final_args.append(arg_value)
+            else:
+                break
+        elif pos_names[i] in kwargs:
+            break
+        else:
+            final_args.append(arg_value)
+
+    if has_var_kwargs:
+        final_kwargs = kwargs
+    else:
+        valid_keys = {p.name for p in params}
+        final_kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
+
+    return func(*final_args, **final_kwargs)
+

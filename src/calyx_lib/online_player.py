@@ -102,7 +102,7 @@ class OnlinePlayerRecorder:
 
                 self.__logger.debug(f"Player list command query timeout = {timeout}")
                 match: Optional[re.Match] = self.__queries.query(   # type: ignore
-                    self.__command, ONLINE_PLAYER_MATCH_PATTERN, timeout=timeout
+                    self.__command, ONLINE_PLAYER_MATCH_PATTERN, timeout=timeout  # ty:ignore[invalid-argument-type]
                 )
 
                 if match is not None:

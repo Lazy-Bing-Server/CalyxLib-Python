@@ -1,8 +1,9 @@
 from pathlib import Path
-from typing import Union, Callable, Any, Dict, Protocol
+from typing import Union, Callable, Any, Dict, Protocol, List, TypeVar, Iterable, TYPE_CHECKING
 
 from mcdreforged.api.rtext import RTextBase
 from mypy_extensions import VarArg, KwArg
+
 
 PathStr = Union[str, Path]
 
@@ -30,5 +31,13 @@ class Subscriptable(Protocol):
     def __setitem__(self, item, value) -> Any:
         pass
 
-
 CommentTextWrapper = Callable[[MessageText], MessageText]
+
+T = TypeVar('T')
+InGameConfigItemGetter = Union[
+    Callable[[List[str]], T],
+    Callable[[], T],
+]
+InGameConfigKeyTextGetter = InGameConfigItemGetter[MessageText]
+InGameConfigValueSuggester = InGameConfigItemGetter[Iterable[Any]]
+
