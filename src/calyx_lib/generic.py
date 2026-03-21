@@ -1,15 +1,18 @@
 from pathlib import Path
-from typing import Union, Callable, Any, Dict, Protocol, List, TypeVar, Iterable, TYPE_CHECKING
+from typing import Union, Callable, Any, Dict, Protocol
 
 from mcdreforged.api.rtext import RTextBase
 from mypy_extensions import VarArg, KwArg
 
+__all__ = [
+    "MessageText",
+]
 
 PathStr = Union[str, Path]
 
 MessageText = Union[str, RTextBase]
 TranslateFunc = Callable[
-    [str, VarArg(Any), KwArg(Any)], MessageText
+    [str, VarArg(Any), KwArg(Any)], MessageText  # ty:ignore[invalid-type-form]
 ]
 
 # language -> text
@@ -32,12 +35,4 @@ class Subscriptable(Protocol):
         pass
 
 CommentTextWrapper = Callable[[MessageText], MessageText]
-
-T = TypeVar('T')
-InGameConfigItemGetter = Union[
-    Callable[[List[str]], T],
-    Callable[[], T],
-]
-InGameConfigKeyTextGetter = InGameConfigItemGetter[MessageText]
-InGameConfigValueSuggester = InGameConfigItemGetter[Iterable[Any]]
 

@@ -196,8 +196,6 @@ class BlossomTranslator:
         try:
             if _mcdr_tr_language is None:
                 raise ValueError("Language not specified")
-            if _mcdr_tr_language is None:
-                raise
             return self.translate_from_dict(translation_dict, language_order, *args, **kwargs)
         except Exception as e:
             lang_text = self.format_language_text(language_order)

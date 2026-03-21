@@ -58,10 +58,12 @@ class CommandQueries:
             return item.get(timeout=timeout)
 
     def on_info(self, server: "PluginServerInterface", info: "Info"):
-        if info.is_from_server and not self.__items:
+        # print(f"Received info from server: {info.content}")
+        if info.is_from_server:
             for item in self.__items:
                 match = None
                 for p in item.patterns:
+                    # print(p)
                     match = p.fullmatch(str(info.content))
                     if match is not None:
                         break

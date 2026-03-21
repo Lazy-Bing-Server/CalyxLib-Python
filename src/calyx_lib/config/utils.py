@@ -1,9 +1,13 @@
-from typing import List, Any, TYPE_CHECKING, Callable, Optional
+from typing import List, Any, Callable, Optional, TYPE_CHECKING
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from pydantic.fields import FieldInfo
+
+"""
+Not API
+"""
 
 
 def get_field_from_nested_model(

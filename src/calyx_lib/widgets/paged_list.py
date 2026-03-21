@@ -1,14 +1,15 @@
-from typing import Tuple, Iterable, Generic, Callable, Optional, List, TypeVar
+from typing import Tuple, Iterable, Generic, Callable, Optional, List, TypeVar, Union, TYPE_CHECKING
 from typing import Literal as LiteralType
 from types import MethodType
 from math import ceil
 
+from calyx_lib.utils import adaptive_call
+from calyx_lib.generic import MessageText
 from mcdreforged.api.rtext import *
 from mcdreforged.api.command import CommandContext, AbstractNode, Literal, Integer
 
-
-from calyx_lib.interface.blossom_base_interface import BlossomBaseInterface
-from calyx_lib.generic import MessageText
+if TYPE_CHECKING:
+    from calyx_lib.interface.blossom_base_interface import BlossomBaseInterface
 
 PAGE_ARG = '--page'
 PAGE_NUM = "page_num"
@@ -22,13 +23,14 @@ __all__ = [
     "PagedListWidget"
 ]
 
+AnyNode = TypeVar("AnyNode", bound=AbstractNode)
 
 class PagedListWidget(Generic[T]):
     def __init__(
         self,
         base_interface: "BlossomBaseInterface",
         object_list: Iterable[T],
-        factory: Callable[[T], RTextBase],
+        factory: Union[Callable[[T], MessageText], Callable[[T, int], MessageText]],
         default_item_per_page: int,
         context: CommandContext
     ):
@@ -39,11 +41,12 @@ class PagedListWidget(Generic[T]):
         self.__ctx = context
 
     def __build(self, head: Optional[int] = None, tail: Optional[int] = None):
-        lines: List[RTextBase] = []
+        lines: List[MessageText] = []
+        current_index = head or 0
         for item in self.__list[head:tail]:
-            line = self.__factory(item)
-            if line is not None:
-                lines.append(line)
+            line = adaptive_call(self.__factory, [item, current_index], {})
+            lines.append(line)
+            current_index += 1
         return lines
 
     def get_max_page(self, item_per_page: Optional[int] = None):
@@ -157,7 +160,7 @@ class PagedListWidget(Generic[T]):
         return RTextBase.join('\n', self.get_full_page_lines(hint_line=hint_line))
 
     @staticmethod
-    def list_command_wrapper(target_node: AbstractNode) -> AbstractNode:
+    def list_command_wrapper(target_node: AnyNode) -> AnyNode:
         """
         This wrapper will just attach page param nodes as its children,
         and the wrapped node will make this class able to get next/previous page command automatically
@@ -170,7 +173,7 @@ class PagedListWidget(Generic[T]):
             context[LIST_COMMAND] = context.command_read
             return old_method(context, *args, **kwargs)
 
-        target_node._on_visited = MethodType(_on_visited, target_node)
+        target_node._on_visited = MethodType(_on_visited, target_node)  # ty:ignore[invalid-assignment]
 
         target_node.then(
             Literal(PAGE_ARG).then(

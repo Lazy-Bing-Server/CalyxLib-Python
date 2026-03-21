@@ -27,6 +27,8 @@ calyx_lib:
       config_loaded: 配置文件已加载
     in_game:
       # Info
+      default_value_hint: "(默认值)"
+      modified_value_hint: "(非默认)"
       value_set: 已将配置键 §e{key}§r 的值设置为 §b{value}§r
       config_saved: 配置文件§a已保存§r
       config_not_saved: 配置文件§e未保存§r
@@ -38,6 +40,7 @@ calyx_lib:
       set_failed: 未知原因配置设置失败
       # Warning:
       duplicated_args: 已忽略重复输入的参数
+
       # Hover
       suggested_value_hover: 点此将配置项 §e{key}§r 设为 §b{value}§r
       default_desc: 暂未提供简介

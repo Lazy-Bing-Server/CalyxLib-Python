@@ -2,12 +2,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from copy import deepcopy
 from typing import Optional, TYPE_CHECKING, Literal, Type, Iterable, List, Any, \
-    TypeVar, Union, Tuple
+    TypeVar, Union
 
 from mcdreforged.api.rtext import RTextBase, RColor, RTextMCDRTranslation
-from mcdreforged.api.types import CommandSource
+from mcdreforged.api.types import CommandSource, PlayerCommandSource, ConsoleCommandSource
 from pydantic import BaseModel, ValidationError, TypeAdapter
 from ruamel.yaml import YAML
 
@@ -16,15 +15,19 @@ from calyx_lib.config.pydantic import PydanticValidationErrorMessage, \
     ConfigSerializationContext
 from calyx_lib.config.yaml import any_to_yaml, ConfigComment, \
     CommentContext, CommentCarrier, adjust_comment_indentation
-from calyx_lib.translator import BlossomTranslator
 from calyx_lib.generic import MessageText, PathStr, Subscriptable, TranslationLanguageDict
+from calyx_lib.translator import BlossomTranslator
 from calyx_lib.utils import touch_directory
+from calyx_lib.widgets.rtext_split import split_rtext
 
 if TYPE_CHECKING:
     from typing import Dict
 
 
 ModelType = TypeVar('ModelType', bound=BaseModel)
+
+
+__all__ = ["BlossomBaseInterface"]
 
 
 class BlossomBaseInterface(ABC):
@@ -57,7 +60,6 @@ class BlossomBaseInterface(ABC):
                 self.source_to_reply.reply(msg)
 
     def __init__(self):
-        self.logger = self.get_logger()
         self.translator = BlossomTranslator(self)
         for lang in ["zh_cn", "en_us"]:
             target_file_path = Path(constants.SELF_PACKAGE_PATH) / "lang" / f"{lang}.yml"
@@ -66,64 +68,50 @@ class BlossomBaseInterface(ABC):
                     target_file_path, encoding="utf8"
                 )
 
+    @property
     @abstractmethod
-    def get_logger(self) -> Logger:
+    def logger(self) -> Logger:
+        """
+        Logger of this interface
+        Inherit this method to use your own custom logger
+        :return: Logger
+        """
         ...
 
     @abstractmethod
     def get_language(self):
+        """
+        Get language you currently configured
+        When using MCDReforged, this should be the same as ServerInterface.get_mcdr_language()
+        :return: str, Locale literal
+        """
         ...
 
-    def split_rtext_into_raw_json_list(
-            self,
-            any_rtext: RTextBase,
-            divider: str,
-            max_split: int = -1,
-            language_override: Optional[str] = None
-    ) -> list:
-        def apply_text_to_dict(dict_: dict, *text):
-            for item in text:
-                result_ = deepcopy(dict_)
-                result_['text'] = item
-                yield result_
+    def say(self, message: MessageText, *, encoding: Optional[str] = None):
+        """
+        Similar to `ServerInterface.say`
+        In standalone programs, this will attach language context to RTextMCDRTranslation
+        to avoid that the translation text can only be translated into `en_us`
+        The difference is that this method splits the message by `\\n` and sends it,
+        regardless of whether the message type is str or RTextBase.
 
-        def split_raw_json(target_json: Union[dict, list, str], divider_: str, maxsplit: int = -1) -> Tuple[list, int]:
-            if maxsplit == 0:
-                return [target_json], 0
-            if isinstance(target_json, dict):
-                if 'text' in target_json.keys():
-                    target_json = target_json.copy()
-                    divided_text = list(str(target_json.pop('text')).split(divider_, maxsplit=maxsplit))
-                    split_times = len(divided_text) - 1
-                    if maxsplit != -1:
-                        maxsplit = maxsplit - split_times
-                    return list(apply_text_to_dict(target_json, *divided_text)), maxsplit
-                return [target_json], maxsplit
-            elif isinstance(target_json, str):
-                divided_text = target_json.split(divider_, maxsplit=maxsplit)
-                split_times = len(divided_text) - 1
-                if maxsplit != -1:
-                    maxsplit = maxsplit - split_times
-                return list(divided_text), maxsplit
-            elif isinstance(target_json, list):
-                result_list = []
-                for item in target_json:
-                    current_split, maxsplit = split_raw_json(item, divider_, maxsplit=maxsplit)
-                    result_list += current_split
-                    if maxsplit == 0:
-                        break
-                return result_list, maxsplit
-            else:
-                raise TypeError(f"Not a valid raw json type: {target_json.__class__.__name__}")
-
-        language = language_override or self.get_language()
-        with RTextMCDRTranslation.language_context(language):
-            raw_json = any_rtext.to_json_object()
-        result, _ = split_raw_json(raw_json, divider, maxsplit=max_split)
-        return result
-
+        :param message: str or RTextBase
+        :param encoding: encoding literal
+        :return: No return
+        """
+        with RTextMCDRTranslation.language_context(self.get_language()):
+            for line in split_rtext(RTextBase.from_any(message), divider='\n'):
+                self.logger.info(line)
 
     def dtr(self, translation_dict: TranslationLanguageDict, *args, **kwargs):
+        """
+        Similar to `RTextMCDRTranslation.from_translation_dict()`
+        But this use the individual translator of `BlossomBaseInterface`
+        :param translation_dict: dict, language -> translated text
+        :param args: The args to be formatted
+        :param kwargs: The kwargs to be formatted
+        :return: RTextMCDRTranslation
+        """
         def fake_tr(
             translation_key: str,
             *inner_args,
@@ -168,6 +156,30 @@ class BlossomBaseInterface(ABC):
             _calyx_log_error_message: bool = True,
             **kwargs
     ) -> MessageText:
+        """
+        Similar to `ServerInterface.tr()`
+        But this use the individual translator of `BlossomBaseInterface`
+
+        Return a translated text corresponded to the translation key and format the text with given args and kwargs
+
+        If args or kwargs contains :class:`RText <mcdreforged.minecraft.rtext.text.RTextBase>` element,
+        then the result will be a :class:`RText <mcdreforged.minecraft.rtext.text.RTextBase>`,
+        otherwise the result will be a regular str
+
+        If the translation key is not recognized, the return value will be the translation key itself
+
+        See :ref:`here <plugin-translation>` for the ways to register translations for your plugin
+
+
+        :param translation_key: The key of the translation
+        :param args: The args to be formatted
+        :param language: The deprecated alias for `_mcdr_tr_language`, to keep the compatibility to some older MCDR extensions
+        :param _mcdr_tr_language: Specific language to be used in this translation, or the language that MCDR is using will be used
+        :param _mcdr_tr_allow_failure: `bool`, set it to `False` to raise an exception when it fails
+        :param _calyx_default_fallback: Fallback text when it fails
+        :param _calyx_log_error_message: `bool`, set it to `False` to make it silent when it fails
+        :param kwargs: The kwargs to be formatted
+        """
         target_lang = _mcdr_tr_language or language or self.get_language()
         return self.translator.translate(
             translation_key,
@@ -188,6 +200,24 @@ class BlossomBaseInterface(ABC):
             _calyx_log_error_message: bool = True,
             **kwargs
     ) -> "RTextMCDRTranslation":
+        """
+        Similar to `ServerInterface.rtr()`
+        But this use the individual translator of `BlossomBaseInterface`
+
+        Return a :class:`~mcdreforged.translation.translation_text.RTextMCDRTranslation` component,
+        that only translates itself right before displaying or serializing
+
+        Using this method instead of :meth:`tr` allows you to display your texts in :ref:`user's preferred language <preference-language>` automatically
+
+        Of course, you can construct :class:`~mcdreforged.translation.translation_text.RTextMCDRTranslation` yourself instead of using this method if you want
+
+        :param translation_key: The key of the translation
+        :param args: The args to be formatted
+        :param _mcdr_tr_allow_failure: `bool`, set it to `False` to raise an exception when it fails
+        :param _calyx_default_fallback: Fallback text when it fails
+        :param _calyx_log_error_message: `bool`, set it to `False` to make it silent when it fails
+        :param kwargs: The kwargs to be formatted
+        """
         return RTextMCDRTranslation(
             translation_key,
             *args,
@@ -226,39 +256,72 @@ class BlossomBaseInterface(ABC):
 
     def save_config(
             self,
-            file_name: PathStr,
+            file_path: PathStr,
             config: BaseModel,
+            *,
             echo_in_console: bool = True,
             source_to_reply: Optional[CommandSource] = None,
             failure_policy: "Literal['regen', 'raise']" = 'regen',
             encoding: str = 'utf8',
             should_generate_comment: bool = True,
-            optional_context: Optional[CommentContext] = None
+            optional_context: Optional[CommentContext] = None,
+            pydantic_model_dump_kwargs: Optional[dict] = None
     ):
+        """
+        A more advanced method to save your `pydantic.BaseModel` or `calyx_lib.config.CommentedModel` type config as a json file
+
+        Supports attach the comment included in CommentedModel field annotations to the YAML files
+
+        :param config: The config instance to be saved
+        :param file_path: The name of the config file. It can also be a path to the config file
+        :param encoding: The encoding method to write the config file. Default ``"utf8"``
+        :param echo_in_console: Whether to echo saving log to console, `True` by default
+        :param source_to_reply: Whether to echo saving log to command source, `None` by default
+        :param failure_policy: The policy of handling a config loading error.
+            ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
+        :param should_generate_comment: Whether to generate the comment, `True` by default.
+            Comment in `CommentedModel` will be dumped into YAML file
+        :param optional_context: Add additional comments with this context
+        :param pydantic_model_dump_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
+            Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
+            and context will be excluded from the dump.
+        """
         log_handler = self.__ConfigProcessLoggingHandler(
             self, echo_in_console=echo_in_console, source_to_reply=source_to_reply
         )
 
-        file_path = Path(file_name)
+        file_path = Path(file_path)
         if file_path.is_dir():
             file_path.rmdir()
 
         context = self.__get_default_comment_context()
         if should_generate_comment:
             context = optional_context or context
+        if pydantic_model_dump_kwargs is None:
+            pydantic_model_dump_kwargs = {}
+        if 'context' in pydantic_model_dump_kwargs:
+            pydantic_model_dump_kwargs.pop('context')
+        if 'exclude_none' in pydantic_model_dump_kwargs:
+            pydantic_model_dump_kwargs.pop('exclude_none')
+        if 'mode' in pydantic_model_dump_kwargs:
+            pydantic_model_dump_kwargs.pop('mode')
         try:
             serialized = config.model_dump(
                 exclude_none=True,
                 context=ConfigSerializationContext(
                     global_wrapper=context.global_wrapper
-                )
+                ),
+                mode='python',
+                **pydantic_model_dump_kwargs
             )
         except Exception as exc:
             if failure_policy == 'raise':
                 raise exc
             serialized = config.__class__().model_dump(
                 exclude_none=True,
-                context=ConfigSerializationContext()
+                context=ConfigSerializationContext(),
+                mode='python',
+                **pydantic_model_dump_kwargs
             )
 
         should_generate_comment = should_generate_comment and isinstance(
@@ -282,12 +345,40 @@ class BlossomBaseInterface(ABC):
             self,
             file_path: PathStr,
             model_class: Type[ModelType],
+            *,
             echo_in_console: bool = True,
             source_to_reply: Optional[CommandSource] = None,
             encoding: str = "utf8",
             failure_policy: Literal['regen', 'raise'] = "regen",
             should_generate_comment: bool = True,
+            pydantic_model_validate_kwargs: Optional[dict] = None,
+            pydantic_model_dump_kwargs: Optional[dict] = None,
     ) -> ModelType:
+        """
+        A more advanced method to a :class:`pydantic.BaseModel` type config from a json file
+
+        Default config is supported. Missing key-values in the loaded config object will be filled using the default config
+        If anything is regenerated in config loading, the key will be marked with a line of comments
+
+        :param file_path: The name of the config file. It can also be a path to the config file
+        :param model_class: A class derived from :class:`pydantic.BaseModel`.
+            When specified the loaded config data will be deserialized
+        :param echo_in_console: If logging messages in console about config loading
+        :param source_to_reply: The command source for replying logging messages
+        :param encoding: The encoding method to read the config file. Default ``"utf8"``
+        :param failure_policy: The policy of handling a config loading error.
+            ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
+        :param should_generate_comment: Only when anything is going to be regenerated, this will take effect
+            Whether to generate the comment, `True` by default.
+            Comment in `CommentedModel` will be dumped into YAML file
+        :param pydantic_model_dump_kwargs: Only when anything is going to be regenerated, this will take effect
+            Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
+            Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
+            and context will be excluded from the dump.
+        :param pydantic_model_validate_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_validate` method.
+            If not provided, ``{}`` will be used
+        :return: Config instance in target model class
+        """
         log_handler = self.__ConfigProcessLoggingHandler(
             self, echo_in_console=echo_in_console, source_to_reply=source_to_reply
         )
@@ -340,12 +431,13 @@ class BlossomBaseInterface(ABC):
                         )
                     requires_save = True
 
+            if pydantic_model_validate_kwargs is None:
+                pydantic_model_validate_kwargs = {}
+
             try:
-                cfg_final = model_class.model_validate(raw_data)
+                cfg_final = model_class.model_validate(raw_data, **pydantic_model_validate_kwargs)
             except ValidationError as exc:
                 requires_save = True
-                exc: ValidationError    # type: ignore
-                # Yeet both pycharm and mypy warnings :<
                 errors = TypeAdapter(
                     List[PydanticValidationErrorMessage]
                 ).validate_python(
@@ -452,7 +544,8 @@ class BlossomBaseInterface(ABC):
                 encoding=encoding,
                 failure_policy=failure_policy,
                 should_generate_comment=should_generate_comment,
-                optional_context=comment_context
+                optional_context=comment_context,
+                pydantic_model_dump_kwargs=pydantic_model_dump_kwargs,
             )
         log_handler.info(self.rtr('calyx_lib.config.loading.config_loaded'))
 

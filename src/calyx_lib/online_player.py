@@ -3,12 +3,16 @@ from logging import Logger
 from threading import RLock
 from typing import List, Optional
 
+from mcdreforged import FunctionThread
 from mcdreforged.api.decorator import new_thread
 from mcdreforged.api.event import MCDRPluginEvents
 from mcdreforged.api.types import PluginServerInterface
 
 from calyx_lib.query import CommandQueries
 from calyx_lib.utils import to_camel_case
+
+
+__all__ = ['OnlinePlayerRecorder']
 
 
 ONLINE_PLAYER_MATCH_PATTERN = [
@@ -24,21 +28,26 @@ ONLINE_PLAYER_MATCH_PATTERN = [
 
 
 class OnlinePlayerRecorder:
+    # TODO: Async
     def __init__(
-            self, server: "PluginServerInterface", logger: Optional["Logger"] = None
+            self, server: "PluginServerInterface", logger: Optional["Logger"] = None, refresh_on_server_starts: bool = False,
     ):
         self.__lock = RLock()
         self.__players: List[str] = []
         self.__server = server
         self.__logger = logger or server.logger
         self.__thread_prefix = to_camel_case(self.__server.get_self_metadata().id) + '@'
-        self.__limit = 0
+        self.__limit: Optional[int] = None
         self.__enabled = False
         self.__command = 'list'
         self.__queries = CommandQueries(self.__server, self.__logger)
         self.__patterns = ONLINE_PLAYER_MATCH_PATTERN
 
-        self.register_event_listeners()
+        self.register_event_listeners(refresh_on_server_start=refresh_on_server_starts)
+
+    @property
+    def on_executor_thread(self) -> bool:
+        return self.__server.is_on_executor_thread() or self.__server.is_on_async_executor_thread()
 
     def set_player_list_query_patterns(self, patterns: List[str]) -> None:
         """
@@ -52,26 +61,38 @@ class OnlinePlayerRecorder:
     def set_player_list_command(self, command: str):
         self.__command = command
 
-    def get_player_list(self, refresh: bool = False) -> List[str]:
+    def get_player_list(self, refresh: bool = False, timeout: int = 3, block: bool = False) -> List[str]:
         """
         Get player list in server
         :param refresh: If this is `true`, the values will be refreshed before return
+        :param timeout: Timeout for command ``list`` when refresh is ``True``
+        :param block: Block until command ``list`` is executed
         :return: List of player names
         """
         with self.__lock:
             if refresh:
-                self.__refresh_online_players()
+                thread = self.__refresh_online_players(timeout=timeout)
+                if block:
+                    if self.on_executor_thread:
+                        raise RuntimeError("Can't block (async) executor thread")
+                    thread.get_return_value(block=True)
             return self.__players.copy()
 
-    def get_player_limit(self, refresh: bool = False) -> int:
+    def get_player_limit(self, refresh: bool = False, timeout: int = 3, block: bool = False) -> Optional[int]:
         """
         Get the maximum player count for this server
         :param refresh: If this is `true`, the values will be refreshed before return
+        :param timeout: Timeout for command ``list`` when refresh is ``True``
+        :param block: Block until command ``list`` is executed
         :return: Player limit value
         """
         with self.__lock:
             if refresh or self.__limit is None:
-                self.__refresh_online_players()
+                thread = self.__refresh_online_players(timeout=timeout)
+                if block:
+                    if self.on_executor_thread:
+                        raise RuntimeError("Can't block (async) executor thread")
+                    thread.get_return_value(block=True)
             return self.__limit
 
     def __add_player(self, player: str):
@@ -92,7 +113,7 @@ class OnlinePlayerRecorder:
 
         return __execute()
 
-    def __refresh_online_players(self, timeout: int = 3):
+    def __refresh_online_players(self, timeout: int = 3) -> FunctionThread:
         @new_thread(self.__thread_prefix + "RefreshOnlinePlayers")
         def __execute():
             with self.__lock:
@@ -106,21 +127,26 @@ class OnlinePlayerRecorder:
                 )
 
                 if match is not None:
-                    amount = match['amount']
+                    amount_str = match['amount']
+                    amount = int(amount_str) if amount_str.isdigit() else 0
                     self.__limit = match['limit']
                     players_string = match['players'].strip()
-                    self.__players = players_string.split(', ')
+                    self.__players = []
+                    if players_string != "":
+                        self.__players = list(players_string.split(', '))
                     self.__logger.debug(
                         "Player list refreshed: "
                         + ", ".join(self.__players)
                         + f" (max {self.__limit})"
                     )
                     if amount != len(self.__players):
+                        self.__logger.warning(f"Parsed player counts: {amount}")
+                        self.__logger.warning(f"Parsed player list length: {len(self.__players)}")
                         self.__logger.warning(
-                            "Incorrect player count found while refreshing player list"
+                            f"Incorrect player count found while refreshing player list"
                         )
                 self.__enabled = True
-        return __execute()
+        return __execute() # type: ignore   fk decorator no type hint :<
 
     def __enable_player_join(self):
         @new_thread(self.__thread_prefix + "EnablePlayerJoin")
@@ -128,7 +154,6 @@ class OnlinePlayerRecorder:
             with self.__lock:
                 self.__enabled = True
                 self.__logger.debug("Player list counting enabled")
-
         return __execute()
 
     def __clear_online_players(self):
@@ -143,22 +168,22 @@ class OnlinePlayerRecorder:
 
         return __execute()
 
-    def register_event_listeners(self) -> None:
-        """
-        If you want to make a recorder instance work in your plugin,
-        This must be called in your plugin
-        when plugin loaded event (on_load()) is dispatched
-        :return: None
-        """
+    def register_event_listeners(self, refresh_on_server_start: bool = False) -> None:
         self.__queries.register_event_listeners()
         self.__server.register_event_listener(
             MCDRPluginEvents.PLUGIN_LOADED,
             lambda *args, **kwargs: self.__refresh_online_players(),
         )
-        self.__server.register_event_listener(
-            MCDRPluginEvents.SERVER_START,
-            lambda *args, **kwargs: self.__enable_player_join(),
-        )
+        if not refresh_on_server_start:
+            self.__server.register_event_listener(
+                MCDRPluginEvents.SERVER_START,
+                lambda *args, **kwargs: self.__enable_player_join(),
+            )
+        else:
+            self.__server.register_event_listener(
+                MCDRPluginEvents.SERVER_STARTUP,
+                lambda *args, **kwargs: self.__refresh_online_players(),
+            )
         self.__server.register_event_listener(
             MCDRPluginEvents.PLAYER_JOINED,
             lambda _, player, __: self.__add_player(player),

@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "ConfigComment"
+    "ConfigComment",
+    "CommentContext"
 ]
 
 
@@ -26,8 +27,8 @@ class ConfigComment:
         text_getter: Union[
             Callable[[], MessageText],
             Callable[["BlossomBaseInterface"], MessageText],
-            Callable[["BlossomBaseInterface", Optional[str]], MessageText],
-            Callable[["BlossomBaseInterface", Optional[str], Optional["FieldInfo"]], MessageText],
+            Callable[["BlossomBaseInterface", Optional[List[str]]], MessageText],
+            Callable[["BlossomBaseInterface", Optional[List[str]], Optional["FieldInfo"]], MessageText],
         ],
         loc: Literal['before', 'eol'] = 'before',
         priority: Union[int, float] = 1000,
@@ -38,8 +39,12 @@ class ConfigComment:
         self.priority = priority
         self.ignore_global_wrapper = ignore_global_wrapper
 
-    def get_text(self, base_interface: "BlossomBaseInterface", key: str, field: "FieldInfo"):
-        return adaptive_call(self.text_getter, [base_interface, key, field], {})
+    def get_text(self, base_interface: "BlossomBaseInterface", key: Optional[str], field: Optional["FieldInfo"]):
+        if key is not None:
+            key_list = key.split('.')
+        else:
+            key_list = None
+        return adaptive_call(self.text_getter, [base_interface, key_list, field], {})
 
     @property
     def is_before(self):
@@ -137,7 +142,7 @@ class CommentCarrier:
             self, key: Iterable[str], comment: ConfigComment
     ):
         key_list = list(key)
-        data: Subscriptable = self.data
+        data: Subscriptable = self.data  # ty:ignore[invalid-assignment]
         comment = comment.copy()
         while True:
             current_key = key_list.pop(0)
@@ -214,4 +219,3 @@ def adjust_comment_indentation(yaml_string: str):
     adjusted_lines.reverse()
     return '\n'.join(adjusted_lines)
 
-open().seek()

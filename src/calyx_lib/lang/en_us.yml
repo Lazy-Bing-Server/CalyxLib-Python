@@ -26,6 +26,8 @@ calyx_lib:
       config_loaded: Config loaded
     in_game:
       # Info
+      default_value_hint: "(default value)"
+      modified_value_hint: "(modified value)"
       value_set: Value of config key §e{key}§r have been set to §b{value}§r
       config_saved: Config §asaved§r
       config_not_saved: Config §enot saved§r
@@ -38,7 +40,7 @@ calyx_lib:
       # Warning:
       duplicated_args: Ignored duplicated arguments
       # Hover
-      suggested_value_hover: Click to set config key §e{}§r to value §b{}§r
+      suggested_value_hover: Click to set config key §e{key}§r to value §b{value}§r
       default_desc: No description provided yet
   help_message:
     suggest: Click to fill command §7{}§r
