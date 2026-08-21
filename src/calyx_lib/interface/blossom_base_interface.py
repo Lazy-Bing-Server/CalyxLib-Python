@@ -227,7 +227,7 @@ class BlossomBaseInterface(ABC):
             **kwargs,
         ).set_translator(self.tr)  # ty:ignore[invalid-argument-type]
 
-    def __get_default_comment_context(self):
+    def get_default_comment_context(self) -> CommentContext:
         def tr(
                 translation_key: str,
                 *args, **kwargs
@@ -240,10 +240,10 @@ class BlossomBaseInterface(ABC):
                 **kwargs
             )
         headline = ConfigComment(
-            text_getter=lambda: self.tr(
+            text_getter=lambda: tr(
                 'calyx_lib.config.saving.comments.saving_at',
                 datetime.now().strftime(
-                    str(self.tr('calyx_lib.general.format.datetime'))
+                    str(tr('calyx_lib.general.format.datetime'))
                 )
             ),
             priority=float('-inf'),
@@ -264,7 +264,7 @@ class BlossomBaseInterface(ABC):
             failure_policy: "Literal['regen', 'raise']" = 'regen',
             encoding: str = 'utf8',
             should_generate_comment: bool = True,
-            optional_context: Optional[CommentContext] = None,
+            comment_context: Optional[CommentContext] = None,
             pydantic_model_dump_kwargs: Optional[dict] = None
     ):
         """
@@ -281,7 +281,7 @@ class BlossomBaseInterface(ABC):
             ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
         :param should_generate_comment: Whether to generate the comment, `True` by default.
             Comment in `CommentedModel` will be dumped into YAML file
-        :param optional_context: Add additional comments with this context
+        :param comment_context: Add additional comments with this context
         :param pydantic_model_dump_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
             Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
             and context will be excluded from the dump.
@@ -294,9 +294,12 @@ class BlossomBaseInterface(ABC):
         if file_path.is_dir():
             file_path.rmdir()
 
-        context = self.__get_default_comment_context()
+        if isinstance(comment_context, CommentContext):
+            comment_context = comment_context.copy()
+
+        context = self.get_default_comment_context()
         if should_generate_comment:
-            context = optional_context or context
+            context = comment_context or context
         if pydantic_model_dump_kwargs is None:
             pydantic_model_dump_kwargs = {}
         if 'context' in pydantic_model_dump_kwargs:
@@ -351,6 +354,7 @@ class BlossomBaseInterface(ABC):
             encoding: str = "utf8",
             failure_policy: Literal['regen', 'raise'] = "regen",
             should_generate_comment: bool = True,
+            comment_context: Optional[CommentContext] = None,
             pydantic_model_validate_kwargs: Optional[dict] = None,
             pydantic_model_dump_kwargs: Optional[dict] = None,
     ) -> ModelType:
@@ -371,6 +375,7 @@ class BlossomBaseInterface(ABC):
         :param should_generate_comment: Only when anything is going to be regenerated, this will take effect
             Whether to generate the comment, `True` by default.
             Comment in `CommentedModel` will be dumped into YAML file
+        :param comment_context: CommentContext, add header or footer to it
         :param pydantic_model_dump_kwargs: Only when anything is going to be regenerated, this will take effect
             Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
             Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
@@ -384,6 +389,9 @@ class BlossomBaseInterface(ABC):
         )
         file_path = Path(file_path)
         requires_save = False
+
+        if isinstance(comment_context, CommentContext):
+            comment_context = comment_context.copy()
 
         touch_directory(file_path.parent)
         if file_path.is_dir():
@@ -407,9 +415,8 @@ class BlossomBaseInterface(ABC):
         default_dict_included_none = default.model_dump()
         default_dict_excluded_none = default.model_dump(exclude_none=True)
 
-        comment_context = None
-        if should_generate_comment:
-            comment_context = self.__get_default_comment_context()
+        if comment_context is None:
+            comment_context = self.get_default_comment_context()
 
         try:
             with open(file_path, 'r', encoding=encoding) as f:
@@ -420,7 +427,7 @@ class BlossomBaseInterface(ABC):
                     log_handler.warning(
                         self.rtr('calyx_lib.config.loading.item_lost', key=k)
                     )
-                    if comment_context is not None:
+                    if should_generate_comment and comment_context is not None:
                         comment_context.add_comment(
                             (k, ),
                             ConfigComment(
@@ -500,7 +507,7 @@ class BlossomBaseInterface(ABC):
                         self.logger.debug(">> Error can't be fixed, regenerating... <<")
                         raise
 
-                if comment_context is not None:
+                if should_generate_comment and comment_context is not None:
                     for k, error_list in fixed.items():
                         error_text = []
                         for e in error_list:
@@ -544,7 +551,7 @@ class BlossomBaseInterface(ABC):
                 encoding=encoding,
                 failure_policy=failure_policy,
                 should_generate_comment=should_generate_comment,
-                optional_context=comment_context,
+                comment_context=comment_context,
                 pydantic_model_dump_kwargs=pydantic_model_dump_kwargs,
             )
         log_handler.info(self.rtr('calyx_lib.config.loading.config_loaded'))

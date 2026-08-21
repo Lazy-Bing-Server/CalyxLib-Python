@@ -1,10 +1,11 @@
+from calyx_lib.config.yaml import CommentContext
 from pydantic_core import PydanticSerializationError
 import dataclasses
 import weakref
 from typing import TYPE_CHECKING, Dict, Iterable, Optional, Any, List, Annotated, Union, Callable
 from pydantic import BaseModel, TypeAdapter, ValidationError, ConfigDict
 
-from mcdreforged.api.command import QuotableText, CommandContext, ParseResult, CountingLiteral, GreedyText
+from mcdreforged.api.command import QuotableText, CommandContext, ParseResult, CountingLiteral, GreedyText, Literal
 from mcdreforged.api.types import CommandSource
 from mcdreforged.api.rtext import RText, RColor, RStyle, RAction, RTextList
 
@@ -127,6 +128,7 @@ class ConfigKeyNode(QuotableText):
             desc_line = base_interface.rtr("calyx_lib.config.in_game.default_desc")
 
         suggested_values = in_game_mark.get_suggested_values(base_interface, full_key, field)
+
         current_value = father_model.model_dump(include={full_key[-1]}, mode='json')[full_key[-1]]
 
         father_cls = father_model.__class__
@@ -152,6 +154,22 @@ class ConfigKeyNode(QuotableText):
         value_line = RTextList(current_value_text, ' ', suggested_values_text)
         base_interface.reply(source, RTextList(title, '\n', desc_line, '\n', value_line))
 
+    def __reset_value(
+            self,
+            source: CommandSource,
+            context: CommandContext,
+            base_interface: "BlossomMCDRInterface",
+            config_path: str,
+            save_config_by_default: bool = True,
+            reload_plugin_after_save: bool = False,
+    ):
+        if self.__value_node is None:
+            raise ValueError("Value node is not set")
+        return self.__value_node._set_value(
+            source, context, base_interface, config_path,
+            save_config_by_default=save_config_by_default, reload_plugin_after_save=reload_plugin_after_save, reset=True
+        )
+
     def bind_default_methods(
             self, base_interface: "BlossomMCDRInterface",
             config_path: str,
@@ -159,21 +177,31 @@ class ConfigKeyNode(QuotableText):
             reload_plugin_after_save: bool = False,
             **additional_save_kwargs
     ):
+        value_node = ConfigValueNode(CONFIG_VALUE, self.config, self).bind_default_methods(
+            base_interface, config_path,
+            save_config_by_default=save_config_by_default,
+            reload_plugin_after_save=reload_plugin_after_save,
+            **additional_save_kwargs
+        )
+        self.__value_node = value_node
         return self.suggests(
             self.__suggester
         ).requires(
             self.__is_key_exists,
             lambda src, ctx: self.__invalid_key_msg_getter(base_interface, src, ctx),
         ).then(
+            Literal(['-r', '--reset']).runs(
+                lambda src, ctx: self.__reset_value(
+                    src, ctx, base_interface, config_path,
+                    save_config_by_default=save_config_by_default, reload_plugin_after_save=reload_plugin_after_save
+                )
+            )
+        ).then(
             CountingLiteral(TEMP_FLAG, TEMP_FLAG_KEY).redirects(self)
         ).then(
             CountingLiteral(SAVE_FLAG, SAVE_FLAG_KEY).redirects(self)
         ).then(
-            ConfigValueNode(CONFIG_VALUE, self.config, self).bind_default_methods(
-                base_interface, config_path,
-                save_config_by_default=save_config_by_default,
-                reload_plugin_after_save=reload_plugin_after_save,
-                **additional_save_kwargs)
+            value_node
         ).runs(
             lambda src, ctx: self.__show_config_key_description(src, ctx, base_interface)
         )
@@ -216,7 +244,7 @@ class ConfigValueNode(GreedyText):
             return False
         return True
 
-    def __set_value(
+    def _set_value(
             self,
             source: CommandSource,
             context: CommandContext,
@@ -224,12 +252,13 @@ class ConfigValueNode(GreedyText):
             config_path: str,
             save_config_by_default: bool = True,
             reload_plugin_after_save: bool = False,
+            reset: bool = False,
             **additional_save_kwargs
     ):
         full_key = self.__get_keys(context)
         if full_key is None:
             raise RuntimeError("Father node not set yet, is it a illegal call?")
-        target_value = self.__get_value(context)
+
         is_a_temp_change = context.get(TEMP_FLAG_KEY, 0) > 0
         requires_save: bool = context.get(SAVE_FLAG_KEY, 0) > 0
         if is_a_temp_change and requires_save:
@@ -248,6 +277,18 @@ class ConfigValueNode(GreedyText):
                 base_interface.rtr("calyx_lib.config.in_game.invalid_key", '.'.join(full_key)).set_color(RColor.red)
             )
             return
+
+        if reset:
+            try:
+                target_value = target_field.default
+            except AttributeError:
+                base_interface.reply(
+                    source,
+                    base_interface.rtr("calyx_lib.config.in_game.invalid_default_value")
+                )
+                return
+        else:
+            target_value = self.__get_value(context)
 
         current_value = father_model.model_dump(include={full_key[-1]}, mode='json')[full_key[-1]]
         in_game_mark = InGameConfigItemMark.get_instance_from_field(target_field)
@@ -277,6 +318,10 @@ class ConfigValueNode(GreedyText):
             return
 
         if requires_save:
+            if 'comment_context' in additional_save_kwargs.keys():
+                cmt_ctx = additional_save_kwargs['comment_context']
+                if isinstance(cmt_ctx, CommentContext):
+                    additional_save_kwargs['comment_context'] = cmt_ctx.copy()
             base_interface.save_config(config_path, self.config, **additional_save_kwargs)
             base_interface.reply(
                 source, base_interface.rtr("calyx_lib.config.in_game.config_saved")
@@ -300,11 +345,11 @@ class ConfigValueNode(GreedyText):
             if ingame_mark is None:
                 return []
             items = ingame_mark.get_suggested_values(base_interface, full_key, field)
-            for item in items.copy():
+            results = []
+            for item in items:
                 # Filter non-string items, this would raise exceptions when suggesting
-                if not isinstance(item, str):
-                    items.remove(item)
-            return items
+                results.append(str(item))
+            return results
         except Exception as e:
             base_interface.logger.exception("Unexpected suggest error", exc_info=e)
 
@@ -325,7 +370,7 @@ class ConfigValueNode(GreedyText):
             self.__check_value,
             lambda: base_interface.rtr("calyx_lib.config.in_game.illegal_value"),
         ).runs(
-            lambda src, ctx: self.__set_value(
+            lambda src, ctx: self._set_value(
                 src, ctx, base_interface, config_path,
                 save_config_by_default=save_config_by_default,
                 reload_plugin_after_save=reload_plugin_after_save,

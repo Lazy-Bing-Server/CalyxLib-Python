@@ -340,9 +340,37 @@ class BlossomMCDRInterface(BlossomBaseInterface):
             failure_policy: Literal['regen', 'raise'] = "regen",
             should_generate_comment: bool = True,
             in_data_folder: bool = True,
+            comment_context: Optional[CommentContext] = None,
             pydantic_model_validate_kwargs: Optional[dict] = None,
             pydantic_model_dump_kwargs: Optional[dict] = None,
     ) -> ModelType:
+        """
+        A more advanced method to a :class:`pydantic.BaseModel` type config from a json file
+
+        Default config is supported. Missing key-values in the loaded config object will be filled using the default config
+        If anything is regenerated in config loading, the key will be marked with a line of comments
+
+        :param file_path: The name of the config file. It can also be a path to the config file
+        :param model_class: A class derived from :class:`pydantic.BaseModel`.
+            When specified the loaded config data will be deserialized
+        :param echo_in_console: If logging messages in console about config loading
+        :param source_to_reply: The command source for replying logging messages
+        :param encoding: The encoding method to read the config file. Default ``"utf8"``
+        :param failure_policy: The policy of handling a config loading error.
+            ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
+        :param should_generate_comment: Only when anything is going to be regenerated, this will take effect
+            Whether to generate the comment, `True` by default.
+            Comment in `CommentedModel` will be dumped into YAML file
+        :param in_data_folder: Whether the config file is in data folder or not
+        :param comment_context: CommentContext, add header or footer to it
+        :param pydantic_model_dump_kwargs: Only when anything is going to be regenerated, this will take effect
+            Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
+            Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
+            and context will be excluded from the dump.
+        :param pydantic_model_validate_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_validate` method.
+            If not provided, ``{}`` will be used
+        :return: Config instance in target model class
+        """
         if in_data_folder and not Path(file_path).is_absolute():
             file_path = (Path(self.server.get_data_folder()) / file_path).resolve()
         return super().load_config(
@@ -352,6 +380,7 @@ class BlossomMCDRInterface(BlossomBaseInterface):
             encoding=encoding,
             failure_policy=failure_policy,
             should_generate_comment=should_generate_comment,
+            comment_context=comment_context,
             pydantic_model_validate_kwargs=pydantic_model_validate_kwargs,
             pydantic_model_dump_kwargs=pydantic_model_dump_kwargs,
         )
@@ -366,10 +395,30 @@ class BlossomMCDRInterface(BlossomBaseInterface):
             failure_policy: "Literal['regen', 'raise']" = 'regen',
             encoding: str = 'utf8',
             should_generate_comment: bool = True,
-            optional_context: Optional[CommentContext] = None,
+            comment_context: Optional[CommentContext] = None,
             in_data_folder: bool = True,
             pydantic_model_dump_kwargs: Optional[dict] = None
     ):
+        """
+        A more advanced method to save your `pydantic.BaseModel` or `calyx_lib.config.CommentedModel` type config as a json file
+
+        Supports attach the comment included in CommentedModel field annotations to the YAML files
+
+        :param config: The config instance to be saved
+        :param file_path: The name of the config file. It can also be a path to the config file
+        :param encoding: The encoding method to write the config file. Default ``"utf8"``
+        :param echo_in_console: Whether to echo saving log to console, `True` by default
+        :param source_to_reply: Whether to echo saving log to command source, `None` by default
+        :param failure_policy: The policy of handling a config loading error.
+            ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
+        :param should_generate_comment: Whether to generate the comment, `True` by default.
+            Comment in `CommentedModel` will be dumped into YAML file
+        :param comment_context: Add additional comments with this context
+        :param in_data_folder: Whether the config file is in data folder or not
+        :param pydantic_model_dump_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
+            Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
+            and context will be excluded from the dump.
+        """
         if in_data_folder and not Path(file_path).is_absolute():
             file_path = Path(self.server.get_data_folder()) / file_path
         return super().save_config(
@@ -379,6 +428,6 @@ class BlossomMCDRInterface(BlossomBaseInterface):
             failure_policy=failure_policy,
             encoding=encoding,
             should_generate_comment=should_generate_comment,
-            optional_context=optional_context,
+            comment_context=comment_context,
             pydantic_model_dump_kwargs=pydantic_model_dump_kwargs
         )

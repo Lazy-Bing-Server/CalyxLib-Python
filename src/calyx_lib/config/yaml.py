@@ -82,7 +82,9 @@ class CommentContext:
             indent: int = 0
     ):
         raw_text_lines = []
-        for comment in comments:
+        sorted_comments = comments.copy()
+        sorted_comments.sort(key=lambda item: item.priority, reverse=True)
+        for comment in sorted_comments:
             raw_text_lines += list(self.__get_comment_text(comment, base_interface, key, field).splitlines())
 
         line_prefix = indent * ' ' + "# "
@@ -99,6 +101,14 @@ class CommentContext:
         for key, comments in self.key_comments.items():
             for comment in comments:
                 carrier.set_comment_to_nested_key(key, comment)
+
+    def copy(self):
+        return self.__class__(
+            key_comments=self.key_comments.copy(),
+            global_wrapper=self.global_wrapper,
+            headlines=self.headlines.copy(),
+            eof=self.eof.copy(),
+        )
 
 
 AnyModel = TypeVar('AnyModel', bound=BaseModel)
