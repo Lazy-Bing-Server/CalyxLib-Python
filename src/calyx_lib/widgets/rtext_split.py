@@ -1,5 +1,6 @@
 ﻿from colorlog import debug
 from typing import Optional, Any, Union, Type, List
+from typing_extensions import deprecated
 import logging
 import json
 import os
@@ -8,7 +9,7 @@ from pathlib import Path
 from mcdreforged import RTextBase
 
 # Debug configuration
-DEBUG = True  # Set to True to enable debug logging
+DEBUG = False  # Set to True to enable debug logging
 
 # Setup debug logger
 def setup_debug_logger():
@@ -196,6 +197,7 @@ class HeaderList(list):
         return self.__class__(final_chunks)
 
 
+@deprecated("Use RComplexText.split() instead")
 def split_single_element(item: Any, divider: str, max_split: int, from_right: bool):
     if isinstance(item, list):
         raise TypeError("List is not supported")
@@ -211,6 +213,7 @@ def split_single_element(item: Any, divider: str, max_split: int, from_right: bo
     return result
 
 
+@deprecated("Use RComplexText.split() instead")
 def split_raw_json(item: Any, divider: str, max_split: int, from_right: bool = False):
     callback = lambda i, m, r: split_single_element(i, divider, m, r)
     if isinstance(item, list):
@@ -220,6 +223,7 @@ def split_raw_json(item: Any, divider: str, max_split: int, from_right: bool = F
         return split_single_element(item, divider, max_split, from_right)
 
 
+@deprecated("Use RComplexText.split() instead")
 def split_rtext(any_rtext: RTextBase, divider: str, max_split: int = -1, from_right: bool = False):
     raw_json = any_rtext.to_json_object()
 

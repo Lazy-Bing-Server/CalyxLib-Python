@@ -28,6 +28,7 @@ __all__ = [
     # Widgets
     "PagedListWidget",
     "split_rtext",
+    "RComplexText",
     # Generic
     "MessageText",
     # Logger
