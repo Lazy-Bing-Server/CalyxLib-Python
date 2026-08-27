@@ -2,11 +2,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING, Literal, Type, Iterable, List, Any, \
-    TypeVar
+from typing import Optional, TYPE_CHECKING, Literal, Type, Iterable, List, Any, \
+    TypeVar, Union
 
-from mcdreforged.api.rtext import RTextBase, RColor
-from mcdreforged.api.types import CommandSource
+from mcdreforged.api.rtext import RTextBase, RColor, RTextMCDRTranslation
+from mcdreforged.api.types import CommandSource, PlayerCommandSource, ConsoleCommandSource
 from pydantic import BaseModel, ValidationError, TypeAdapter
 from ruamel.yaml import YAML
 
@@ -15,17 +15,19 @@ from calyx_lib.config.pydantic import PydanticValidationErrorMessage, \
     ConfigSerializationContext
 from calyx_lib.config.yaml import any_to_yaml, ConfigComment, \
     CommentContext, CommentCarrier, adjust_comment_indentation
-from calyx_lib.translation.text import RTextBlossomTranslation
-from calyx_lib.translation.translator import BlossomTranslator
-from calyx_lib.typing import MessageText, PathStr, Subscriptable, TranslationKeyDictRich
+from calyx_lib.generic import MessageText, PathStr, Subscriptable, TranslationLanguageDict
+from calyx_lib.translator import BlossomTranslator
 from calyx_lib.utils import touch_directory
+from calyx_lib.widgets.rtext_split import split_rtext
 
 if TYPE_CHECKING:
-    from mcdreforged.api.rtext import RTextMCDRTranslation
     from typing import Dict
 
 
 ModelType = TypeVar('ModelType', bound=BaseModel)
+
+
+__all__ = ["BlossomBaseInterface"]
 
 
 class BlossomBaseInterface(ABC):
@@ -58,7 +60,6 @@ class BlossomBaseInterface(ABC):
                 self.source_to_reply.reply(msg)
 
     def __init__(self):
-        self.logger = self.get_logger()
         self.translator = BlossomTranslator(self)
         for lang in ["zh_cn", "en_us"]:
             target_file_path = Path(constants.SELF_PACKAGE_PATH) / "lang" / f"{lang}.yml"
@@ -67,15 +68,50 @@ class BlossomBaseInterface(ABC):
                     target_file_path, encoding="utf8"
                 )
 
+    @property
     @abstractmethod
-    def get_logger(self) -> Logger:
+    def logger(self) -> Logger:
+        """
+        Logger of this interface
+        Inherit this method to use your own custom logger
+        :return: Logger
+        """
         ...
 
     @abstractmethod
     def get_language(self):
+        """
+        Get language you currently configured
+        When using MCDReforged, this should be the same as ServerInterface.get_mcdr_language()
+        :return: str, Locale literal
+        """
         ...
 
-    def dtr(self, translation_dict: TranslationKeyDictRich, *args, **kwargs):
+    def say(self, message: MessageText, *, encoding: Optional[str] = None):
+        """
+        Similar to `ServerInterface.say`
+        In standalone programs, this will attach language context to RTextMCDRTranslation
+        to avoid that the translation text can only be translated into `en_us`
+        The difference is that this method splits the message by `\\n` and sends it,
+        regardless of whether the message type is str or RTextBase.
+
+        :param message: str or RTextBase
+        :param encoding: encoding literal
+        :return: No return
+        """
+        with RTextMCDRTranslation.language_context(self.get_language()):
+            for line in split_rtext(RTextBase.from_any(message), divider='\n'):
+                self.logger.info(line)
+
+    def dtr(self, translation_dict: TranslationLanguageDict, *args, **kwargs):
+        """
+        Similar to `RTextMCDRTranslation.from_translation_dict()`
+        But this use the individual translator of `BlossomBaseInterface`
+        :param translation_dict: dict, language -> translated text
+        :param args: The args to be formatted
+        :param kwargs: The kwargs to be formatted
+        :return: RTextMCDRTranslation
+        """
         def fake_tr(
             translation_key: str,
             *inner_args,
@@ -86,19 +122,17 @@ class BlossomBaseInterface(ABC):
             _calyx_default_fallback: str = "<Translation failed>",
             **inner_kwargs,
         ) -> MessageText:
-            if language is not None and _mcdr_tr_language is None:
-                _mcdr_tr_language = language
+            language_order = self.translator.format_language_order(
+                language=language, _mcdr_tr_language=_mcdr_tr_language)
             try:
                 return self.translator.translate_from_dict(
                     translation_dict,
+                    language_order,
                     *inner_args,
-                    _mcdr_tr_language=_mcdr_tr_language,
                     **inner_kwargs,
                 )
             except Exception as e:
-                lang_text = ", ".join(
-                    [f'"{lang}"' for lang in self.translator.fallback_language_order]
-                )
+                lang_text = self.translator.format_language_text(language_order)
                 error_message = (
                     f"Error translate text from dict to language {lang_text}: {str(e)}"
                 )
@@ -109,9 +143,7 @@ class BlossomBaseInterface(ABC):
                 else:
                     raise e
 
-        return RTextBlossomTranslation(
-            "", *args, **kwargs
-        ).set_translator(fake_tr).set_language_getter(self.get_language)
+        return RTextMCDRTranslation("", *args, **kwargs).set_translator(fake_tr)  # ty:ignore[invalid-argument-type]
 
     def tr(
             self,
@@ -124,6 +156,30 @@ class BlossomBaseInterface(ABC):
             _calyx_log_error_message: bool = True,
             **kwargs
     ) -> MessageText:
+        """
+        Similar to `ServerInterface.tr()`
+        But this use the individual translator of `BlossomBaseInterface`
+
+        Return a translated text corresponded to the translation key and format the text with given args and kwargs
+
+        If args or kwargs contains :class:`RText <mcdreforged.minecraft.rtext.text.RTextBase>` element,
+        then the result will be a :class:`RText <mcdreforged.minecraft.rtext.text.RTextBase>`,
+        otherwise the result will be a regular str
+
+        If the translation key is not recognized, the return value will be the translation key itself
+
+        See :ref:`here <plugin-translation>` for the ways to register translations for your plugin
+
+
+        :param translation_key: The key of the translation
+        :param args: The args to be formatted
+        :param language: The deprecated alias for `_mcdr_tr_language`, to keep the compatibility to some older MCDR extensions
+        :param _mcdr_tr_language: Specific language to be used in this translation, or the language that MCDR is using will be used
+        :param _mcdr_tr_allow_failure: `bool`, set it to `False` to raise an exception when it fails
+        :param _calyx_default_fallback: Fallback text when it fails
+        :param _calyx_log_error_message: `bool`, set it to `False` to make it silent when it fails
+        :param kwargs: The kwargs to be formatted
+        """
         target_lang = _mcdr_tr_language or language or self.get_language()
         return self.translator.translate(
             translation_key,
@@ -143,17 +199,35 @@ class BlossomBaseInterface(ABC):
             _calyx_default_fallback: Optional[MessageText] = None,
             _calyx_log_error_message: bool = True,
             **kwargs
-    ) -> Union["RTextMCDRTranslation", "RTextBlossomTranslation"]:
-        return RTextBlossomTranslation(
+    ) -> "RTextMCDRTranslation":
+        """
+        Similar to `ServerInterface.rtr()`
+        But this use the individual translator of `BlossomBaseInterface`
+
+        Return a :class:`~mcdreforged.translation.translation_text.RTextMCDRTranslation` component,
+        that only translates itself right before displaying or serializing
+
+        Using this method instead of :meth:`tr` allows you to display your texts in :ref:`user's preferred language <preference-language>` automatically
+
+        Of course, you can construct :class:`~mcdreforged.translation.translation_text.RTextMCDRTranslation` yourself instead of using this method if you want
+
+        :param translation_key: The key of the translation
+        :param args: The args to be formatted
+        :param _mcdr_tr_allow_failure: `bool`, set it to `False` to raise an exception when it fails
+        :param _calyx_default_fallback: Fallback text when it fails
+        :param _calyx_log_error_message: `bool`, set it to `False` to make it silent when it fails
+        :param kwargs: The kwargs to be formatted
+        """
+        return RTextMCDRTranslation(
             translation_key,
             *args,
             _mcdr_tr_allow_failure=_mcdr_tr_allow_failure,
             _calyx_default_fallback=_calyx_default_fallback,
             _calyx_log_error_message=_calyx_log_error_message,
             **kwargs,
-        ).set_language_getter(self.get_language).set_translator(self.tr)
+        ).set_translator(self.tr)  # ty:ignore[invalid-argument-type]
 
-    def __get_default_comment_context(self):
+    def get_default_comment_context(self) -> CommentContext:
         def tr(
                 translation_key: str,
                 *args, **kwargs
@@ -166,10 +240,10 @@ class BlossomBaseInterface(ABC):
                 **kwargs
             )
         headline = ConfigComment(
-            text=self.tr(
-                'config.saving.comments.saving_at',
+            text_getter=lambda: tr(
+                'calyx_lib.config.saving.comments.saving_at',
                 datetime.now().strftime(
-                    str(self.tr('general.format.datetime'))
+                    str(tr('calyx_lib.general.format.datetime'))
                 )
             ),
             priority=float('-inf'),
@@ -177,44 +251,80 @@ class BlossomBaseInterface(ABC):
         )
 
         return CommentContext(
-            key_comments={}, global_wrapper=tr, headlines=[headline], eof=[]
+            key_comments={}, global_wrapper=lambda x: x, headlines=[headline], eof=[]
         )
 
     def save_config(
             self,
-            file_name: PathStr,
+            file_path: PathStr,
             config: BaseModel,
+            *,
             echo_in_console: bool = True,
             source_to_reply: Optional[CommandSource] = None,
             failure_policy: "Literal['regen', 'raise']" = 'regen',
             encoding: str = 'utf8',
             should_generate_comment: bool = True,
-            optional_context: Optional[CommentContext] = None
+            comment_context: Optional[CommentContext] = None,
+            pydantic_model_dump_kwargs: Optional[dict] = None
     ):
+        """
+        A more advanced method to save your `pydantic.BaseModel` or `calyx_lib.config.CommentedModel` type config as a json file
+
+        Supports attach the comment included in CommentedModel field annotations to the YAML files
+
+        :param config: The config instance to be saved
+        :param file_path: The name of the config file. It can also be a path to the config file
+        :param encoding: The encoding method to write the config file. Default ``"utf8"``
+        :param echo_in_console: Whether to echo saving log to console, `True` by default
+        :param source_to_reply: Whether to echo saving log to command source, `None` by default
+        :param failure_policy: The policy of handling a config loading error.
+            ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
+        :param should_generate_comment: Whether to generate the comment, `True` by default.
+            Comment in `CommentedModel` will be dumped into YAML file
+        :param comment_context: Add additional comments with this context
+        :param pydantic_model_dump_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
+            Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
+            and context will be excluded from the dump.
+        """
         log_handler = self.__ConfigProcessLoggingHandler(
             self, echo_in_console=echo_in_console, source_to_reply=source_to_reply
         )
 
-        file_path = Path(file_name)
+        file_path = Path(file_path)
         if file_path.is_dir():
             file_path.rmdir()
 
-        context = self.__get_default_comment_context()
+        if isinstance(comment_context, CommentContext):
+            comment_context = comment_context.copy()
+
+        context = self.get_default_comment_context()
         if should_generate_comment:
-            context = optional_context or context
+            context = comment_context or context
+        if pydantic_model_dump_kwargs is None:
+            pydantic_model_dump_kwargs = {}
+        if 'context' in pydantic_model_dump_kwargs:
+            pydantic_model_dump_kwargs.pop('context')
+        if 'exclude_none' in pydantic_model_dump_kwargs:
+            pydantic_model_dump_kwargs.pop('exclude_none')
+        if 'mode' in pydantic_model_dump_kwargs:
+            pydantic_model_dump_kwargs.pop('mode')
         try:
             serialized = config.model_dump(
                 exclude_none=True,
                 context=ConfigSerializationContext(
                     global_wrapper=context.global_wrapper
-                )
+                ),
+                mode='python',
+                **pydantic_model_dump_kwargs
             )
         except Exception as exc:
             if failure_policy == 'raise':
                 raise exc
             serialized = config.__class__().model_dump(
                 exclude_none=True,
-                context=ConfigSerializationContext()
+                context=ConfigSerializationContext(),
+                mode='python',
+                **pydantic_model_dump_kwargs
             )
 
         should_generate_comment = should_generate_comment and isinstance(
@@ -224,13 +334,13 @@ class BlossomBaseInterface(ABC):
             context.apply_comment_to_carrier(serialized)
         with open(file_path, mode='w', encoding=encoding) as f:
             if should_generate_comment:
-                context.apply_comment_to_stream(context.headlines, f)
-            f.write(adjust_comment_indentation(any_to_yaml(serialized)))
+                context.apply_comment_to_stream(context.headlines, f, self, None, None)
+            f.write(adjust_comment_indentation(any_to_yaml(self, serialized)))
             if should_generate_comment:
-                context.apply_comment_to_stream(context.eof, f)
+                context.apply_comment_to_stream(context.eof, f, self, None, None)
         log_handler.info(
             self.rtr(
-                'config.saving.config_saved', file=str(file_path)
+                'calyx_lib.config.saving.config_saved', file=str(file_path)
             )
         )
 
@@ -238,17 +348,50 @@ class BlossomBaseInterface(ABC):
             self,
             file_path: PathStr,
             model_class: Type[ModelType],
+            *,
             echo_in_console: bool = True,
             source_to_reply: Optional[CommandSource] = None,
             encoding: str = "utf8",
             failure_policy: Literal['regen', 'raise'] = "regen",
             should_generate_comment: bool = True,
+            comment_context: Optional[CommentContext] = None,
+            pydantic_model_validate_kwargs: Optional[dict] = None,
+            pydantic_model_dump_kwargs: Optional[dict] = None,
     ) -> ModelType:
+        """
+        A more advanced method to a :class:`pydantic.BaseModel` type config from a json file
+
+        Default config is supported. Missing key-values in the loaded config object will be filled using the default config
+        If anything is regenerated in config loading, the key will be marked with a line of comments
+
+        :param file_path: The name of the config file. It can also be a path to the config file
+        :param model_class: A class derived from :class:`pydantic.BaseModel`.
+            When specified the loaded config data will be deserialized
+        :param echo_in_console: If logging messages in console about config loading
+        :param source_to_reply: The command source for replying logging messages
+        :param encoding: The encoding method to read the config file. Default ``"utf8"``
+        :param failure_policy: The policy of handling a config loading error.
+            ``"regen"`` (default): try to re-generate the config; ``"raise"``: directly raise the exception
+        :param should_generate_comment: Only when anything is going to be regenerated, this will take effect
+            Whether to generate the comment, `True` by default.
+            Comment in `CommentedModel` will be dumped into YAML file
+        :param comment_context: CommentContext, add header or footer to it
+        :param pydantic_model_dump_kwargs: Only when anything is going to be regenerated, this will take effect
+            Extra kwargs passed to the :meth:`pydantic.BaseModel.model_dump` method.
+            Notes that the *mode* will always be set to ``"json"`` and the *exclude_none* will always be set to ``True``
+            and context will be excluded from the dump.
+        :param pydantic_model_validate_kwargs: Extra kwargs passed to the :meth:`pydantic.BaseModel.model_validate` method.
+            If not provided, ``{}`` will be used
+        :return: Config instance in target model class
+        """
         log_handler = self.__ConfigProcessLoggingHandler(
             self, echo_in_console=echo_in_console, source_to_reply=source_to_reply
         )
         file_path = Path(file_path)
         requires_save = False
+
+        if isinstance(comment_context, CommentContext):
+            comment_context = comment_context.copy()
 
         touch_directory(file_path.parent)
         if file_path.is_dir():
@@ -264,7 +407,7 @@ class BlossomBaseInterface(ABC):
                 should_generate_comment=should_generate_comment
             )
             log_handler.warning(
-                self.rtr('config.loading.file_not_found', file=str(file_path))
+                self.rtr('calyx_lib.config.loading.file_not_found', file=str(file_path))
             )
             return cfg_final
 
@@ -272,9 +415,8 @@ class BlossomBaseInterface(ABC):
         default_dict_included_none = default.model_dump()
         default_dict_excluded_none = default.model_dump(exclude_none=True)
 
-        comment_context = None
-        if should_generate_comment:
-            comment_context = self.__get_default_comment_context()
+        if comment_context is None:
+            comment_context = self.get_default_comment_context()
 
         try:
             with open(file_path, 'r', encoding=encoding) as f:
@@ -283,25 +425,26 @@ class BlossomBaseInterface(ABC):
                 if k not in raw_data.keys():
                     raw_data[k] = v
                     log_handler.warning(
-                        self.rtr('config.loading.item_lost', key=k)
+                        self.rtr('calyx_lib.config.loading.item_lost', key=k)
                     )
-                    if comment_context is not None:
+                    if should_generate_comment and comment_context is not None:
                         comment_context.add_comment(
                             (k, ),
                             ConfigComment(
-                                self.tr('config.saving.comments.fixed_missing', key=k),
+                                text_getter=lambda: self.tr('calyx_lib.config.saving.comments.fixed_missing', key=k),
                                 priority=float('-inf'),
                                 ignore_global_wrapper=True
                             )
                         )
                     requires_save = True
 
+            if pydantic_model_validate_kwargs is None:
+                pydantic_model_validate_kwargs = {}
+
             try:
-                cfg_final = model_class.model_validate(raw_data)
+                cfg_final = model_class.model_validate(raw_data, **pydantic_model_validate_kwargs)
             except ValidationError as exc:
                 requires_save = True
-                exc: ValidationError    # type: ignore
-                # Yeet both pycharm and mypy warnings :<
                 errors = TypeAdapter(
                     List[PydanticValidationErrorMessage]
                 ).validate_python(
@@ -313,7 +456,7 @@ class BlossomBaseInterface(ABC):
                 def fix_nested_values(
                         error: PydanticValidationErrorMessage,
                         item: Subscriptable,
-                        default: Subscriptable,
+                        default_values: Subscriptable,
                         remaining: Iterable[Any],
                         consumed: Optional[List[Any]] = None,
                 ) -> bool:
@@ -324,10 +467,10 @@ class BlossomBaseInterface(ABC):
                     current_index = current_path.pop(0)
                     consumed = consumed or []
                     try:
-                        if isinstance(default, list):
-                            current_default = default[0]
+                        if isinstance(default_values, list):
+                            current_default = default_values[0]
                         else:
-                            current_default = default[current_index]
+                            current_default = default_values[current_index]
                     except:
                         return True
                     consumed.append(current_index)
@@ -364,17 +507,17 @@ class BlossomBaseInterface(ABC):
                         self.logger.debug(">> Error can't be fixed, regenerating... <<")
                         raise
 
-                if comment_context is not None:
+                if should_generate_comment and comment_context is not None:
                     for k, error_list in fixed.items():
                         error_text = []
                         for e in error_list:
                             error_text.append('- ' + e.msg)
-                        input_value = any_to_yaml(error_list[0].input)
+                        input_value = any_to_yaml(self, error_list[0].input)
                         if len(input_value.splitlines()) > 1:
                             input_value = '\n' + input_value
                         comment = ConfigComment(
-                            self.rtr(
-                                'config.saving.comments.fixed_type_error',
+                            lambda: self.rtr(
+                                'calyx_lib.config.saving.comments.fixed_type_error',
                                 key='.'.join([str(char) for char in k]),
                                 errors='\n'.join(error_text),
                                 value=input_value
@@ -386,19 +529,19 @@ class BlossomBaseInterface(ABC):
                 for pt in fixed:
                     log_handler.warning(
                         self.rtr(
-                            "config.loading.type_fixed", key='.'.join(
+                            "calyx_lib.config.loading.type_fixed", key='.'.join(
                                 [str(i) for i in pt]
                             )
                         )
                     )
                 cfg_final = model_class.model_validate(raw_data)
-        except Exception as exc:
+        except Exception as e:
             if failure_policy == 'raise':
                 raise
             requires_save = True
             cfg_final = model_class()
-            log_handler.warning(self.rtr('config.loading.yaml_syntax_error'))
-            self.logger.debug(f"Error reason: {exc}")
+            log_handler.warning(self.rtr('calyx_lib.config.loading.yaml_syntax_error'))
+            self.logger.debug(f"Error reason: {e}")
         if requires_save:
             self.save_config(
                 file_path,
@@ -408,8 +551,9 @@ class BlossomBaseInterface(ABC):
                 encoding=encoding,
                 failure_policy=failure_policy,
                 should_generate_comment=should_generate_comment,
-                optional_context=comment_context
+                comment_context=comment_context,
+                pydantic_model_dump_kwargs=pydantic_model_dump_kwargs,
             )
-        log_handler.info(self.rtr('config.loading.config_loaded'))
+        log_handler.info(self.rtr('calyx_lib.config.loading.config_loaded'))
 
         return cfg_final

@@ -1,0 +1,108 @@
+﻿name: Publish Master to PyPI/TestPyPI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "src/**"
+      - "*.py"
+
+jobs:
+  publish-testpypi:
+    name: Step 1 - Smoke Test on TestPyPI
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      id-token: write
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/calyx_lib
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - run: uv python install
+      - name: Build
+        run: uv build
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Step 2 - Release to PyPI
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/project/calyx_lib
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - run: uv python install
+      - name: Build
+        run: uv build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  create-release:
+    name: Step 3 - Create GitHub Release
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from constants.py
+        id: version
+        run: |
+          VERSION=$(grep -oP 'VERSION_PYPI = "\K[^"]+' src/calyx_lib/constants.py)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Check if prerelease
+        id: prerelease
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" =~ [abrc] ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Get the latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            # No tags, use entire history
+            NOTES=$(git log --oneline --no-decorate)
+          else
+            # Get commits since latest tag
+            NOTES=$(git log --oneline --no-decorate "$LATEST_TAG"..HEAD)
+          fi
+          # Format as bullet points
+          FORMATTED_NOTES=$(echo "$NOTES" | sed 's/^/- /')
+          # Write to file
+          echo "$FORMATTED_NOTES" > release_notes.txt
+          echo "Generated release notes"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body_path: release_notes.txt
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          token: ${{ secrets.GITHUB_TOKEN }}

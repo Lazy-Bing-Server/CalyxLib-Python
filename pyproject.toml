@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+[project]
+name = "calyx_lib"
+authors = [
+  { name="Ra1ny_Yuki", email="ra1ny_yuki@outlook.com"},
+]
+description = "An alternative API collection for MCDReforged plugins, especially the multi-entrypoint ones"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+]
+license = "LGPL-3.0-only"
+license-files = ["LICEN[CS]E*"]
+dependencies = [
+    "colorama",
+    "colorlog",
+    "mcdreforged>=2.15.0",
+    "mypy-extensions",
+    "pydantic>=2.0.0",
+    "ty>=0.0.23",
+]
+dynamic = ["version"]
+
+[tool.hatch.version]
+path = "src/calyx_lib/constants.py"
+pattern = "VERSION_PYPI = \"(?P<version>[^\"]+)\""
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[project.urls]
+Homepage = "https://github.com/Lazy-Bing-Server/CalyxLib-Python"
+Issues = "https://github.com/Lazy-Bing-Server/CalyxLib-Python/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/calyx_lib"]
+exclude = ['tests', '*.tests', '*.tests.*', 'tests.*']

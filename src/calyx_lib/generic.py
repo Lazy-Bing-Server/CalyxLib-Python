@@ -4,11 +4,15 @@ from typing import Union, Callable, Any, Dict, Protocol
 from mcdreforged.api.rtext import RTextBase
 from mypy_extensions import VarArg, KwArg
 
+__all__ = [
+    "MessageText",
+]
+
 PathStr = Union[str, Path]
 
 MessageText = Union[str, RTextBase]
 TranslateFunc = Callable[
-    [str, VarArg(Any), KwArg(Any)], MessageText
+    [str, VarArg(Any), KwArg(Any)], MessageText  # ty:ignore[invalid-type-form]
 ]
 
 # language -> text
@@ -30,5 +34,5 @@ class Subscriptable(Protocol):
     def __setitem__(self, item, value) -> Any:
         pass
 
-
 CommentTextWrapper = Callable[[MessageText], MessageText]
+

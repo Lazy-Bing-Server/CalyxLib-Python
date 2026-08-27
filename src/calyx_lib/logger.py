@@ -4,11 +4,11 @@ Custom logger for MCDR
 Modified from https://github.com/MCDReforged/MCDReforged/
 Lesser GNU Public License v3
 """
+import contextvars
 import datetime
 import itertools
 import logging
 import os
-import threading
 import time
 import zipfile
 from collections.abc import Callable
@@ -19,13 +19,16 @@ from typing import Dict, Optional, Type, Any
 
 from colorama import Fore, Style
 from colorlog import ColoredFormatter
-from mcdreforged.api.types import ServerInterface, SyncStdoutStreamHandler
+from mcdreforged.api.types import ServerInterface, SyncStdoutStreamHandler, MCDReforgedLogger
 
 from calyx_lib.utils import (
     clean_minecraft_color_code,
     clean_console_color_code,
-    touch_directory
+    touch_directory,
+    represent
 )
+
+__all__ = ['BlossomLogger']
 
 
 class DummyLogger(logging.Logger):
@@ -61,7 +64,7 @@ class ZippingDayRotatingFileHandler(logging.FileHandler):
             (current - self.last_rover_date).days >= self.rotate_day_count
         ):
             self.do_rotate(
-                self.last_record_date and self.last_record_date.strftime('%Y-%m-%d')
+                self.last_record_date.strftime('%Y-%m-%d') if self.last_record_date else None
             )
             self.last_rover_date = current
 
@@ -73,7 +76,8 @@ class ZippingDayRotatingFileHandler(logging.FileHandler):
 
         inited = hasattr(self, 'stream')
         if inited:
-            self.stream.close()
+            if self.stream is not None:
+                self.stream.close()
         try:
             if base_name is None:
                 try:
@@ -204,6 +208,15 @@ class PluginIdAwareFormatter(logging.Formatter):
 
 
 class BlossomLogger(logging.Logger):
+    """
+    An Alternative logger that contains multiple MCDReforgedLogger features
+
+    May not be a long term static API
+    May be deprecated some day
+    Copied and modified from MCDReforged (https://github.com/MCDReforged/MCDReforged) v2.14.7
+    Licensed under GNU Lesser General Public License v3.0 only
+    """
+
     DEFAULT_NAME = "Calyx"
     ROTATE_DAY_COUNT = 7
     LOG_COLORS = {
@@ -236,7 +249,7 @@ class BlossomLogger(logging.Logger):
         datefmt='%H:%M:%S',
     )
 
-    __TLS = threading.local()
+    __debug_context_var = contextvars.ContextVar('__debug_context_var')
 
     def __init__(
         self, logger_name: Optional[str] = None, plugin_id: Optional[str] = None
@@ -244,6 +257,7 @@ class BlossomLogger(logging.Logger):
         super().__init__(logger_name or self.DEFAULT_NAME)
         self.file_handler: Optional[logging.FileHandler] = None
         self.__plugin_id = plugin_id
+        self.__requires_warn_temp = False
 
         self.console_handler = SyncStdoutStreamHandler()
         self.console_handler.setFormatter(self.CONSOLE_FORMATTER)
@@ -253,27 +267,34 @@ class BlossomLogger(logging.Logger):
 
         self.__debug_checker = lambda anything: False
 
+    def _set_temp(self):
+        """
+        Not public API
+        :return:
+        """
+        self.__requires_warn_temp = True
+        return self
+
     def set_debug_checker(self, checker: Callable[[Any], bool]):
         self.__debug_checker = checker
 
     @classmethod
-    def __get_tls_context(cls):
-        return getattr(cls.__TLS, 'debug_context', None)
+    def __get_debug_context(cls):
+        return cls.__debug_context_var.get(None)
 
     @classmethod
     @contextmanager
     def debug_context(cls, context: Any):
-        prev = cls.__get_tls_context()
-        cls.__TLS.debug_context = context
+        token = cls.__debug_context_var.set(context)
         try:
             yield
         finally:
-            cls.__TLS.debug_context = prev
+            cls.__debug_context_var.reset(token)
 
     def should_log_debug(self, context: Any = None):
         mcdr_should_log = False
         if context is None:
-            context = self.__get_tls_context()
+            context = self.__get_debug_context()
         psi = ServerInterface.psi_opt()
         if context is None and psi is not None:
             try:
@@ -283,6 +304,9 @@ class BlossomLogger(logging.Logger):
         return self.__debug_checker(context) or mcdr_should_log
 
     def _log(self, level: int, msg: Any, args: tuple, **kwargs) -> None:    # type: ignore
+        if self.__requires_warn_temp:
+            self.__requires_warn_temp = False
+            self.warning("Logger is not initialized yet, is PluginServerInterface initialized?")
         if self.__plugin_id is not None:
             extra_args = kwargs.get('extra', {})
             extra_args[PluginIdAwareFormatter.PLUGIN_ID_KEY] = self.__plugin_id
@@ -312,15 +336,15 @@ class BlossomLogger(logging.Logger):
             with MCColorFormatControl.disable_minecraft_color_code_transform():
                 self._log(logging.DEBUG, msg, args, **kwargs, stacklevel=2)
 
-    def set_file(self, file_path: str, no_zip_archive: bool = False):
+    def attach_file_handler(self, file_path: str, no_zip_archive: bool = False):
         """
-
+        **Not public API**
         :param file_path:
         :param no_zip_archive:
         :return:
         """
         if self.file_handler is not None:
-            self.unset_file()
+            self.detach_file_handler()
 
         if no_zip_archive:
             self.file_handler = logging.FileHandler(file_path, encoding='UTF-8')
@@ -333,7 +357,7 @@ class BlossomLogger(logging.Logger):
         self.file_handler.setFormatter(self.FILE_FORMATTER)
         self.addHandler(self.file_handler)
 
-    def unset_file(self):
+    def detach_file_handler(self):
         """
         **Not public API**
 
@@ -343,3 +367,6 @@ class BlossomLogger(logging.Logger):
             self.removeHandler(self.file_handler)
             self.file_handler.close()
             self.file_handler = None
+
+    def __repr__(self):
+        return represent(self)
